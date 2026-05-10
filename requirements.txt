@@ -1,0 +1,36 @@
+# ===========================================
+# 学科知识整合智能体 - Python 依赖
+# 安装: pip install -r requirements.txt
+# ===========================================
+
+# ---------- Web 框架 ----------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.19
+
+# ---------- 文件解析 ----------
+pdfplumber==0.11.9          # PDF解析
+pypdf==6.11.0                # PDF解析（备选）
+python-docx==1.1.2           # Word .docx解析
+openpyxl==3.1.5              # Excel解析
+pandas==2.2.3                # 数据处理
+markdown==3.7                # Markdown解析
+beautifulsoup4==4.12.3       # HTML解析
+
+# ---------- LLM & AI ----------
+openai==1.68.0               # OpenAI API
+dashscope==1.22.1            # 通义千问 API
+sentence-transformers==3.4.1 # 文本嵌入
+transformers==4.48.3         # HuggingFace Transformers
+torch==2.6.0                 # PyTorch（CPU版本即可）
+
+# ---------- 向量数据库 ----------
+faiss-cpu==1.9.0             # FAISS 向量检索
+chromadb==0.5.23             # ChromaDB（备选）
+
+# ---------- 工具库 ----------
+python-dotenv==1.0.1         # 环境变量管理
+pydantic==2.10.5             # 数据验证
+httpx==0.28.1                # HTTP客户端
+numpy==2.2.2                 # 数值计算
+scikit-learn==1.6.1          # 机器学习工具

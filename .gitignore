@@ -1,0 +1,58 @@
+# 教材数据（不上传到GitHub，单文件限制100MB）
+data/textbooks/*.pdf
+*.pdf
+
+# 环境变量（包含API密钥等敏感信息）
+.env
+.dev.vars
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+.venv/
+env/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+frontend/dist/
+frontend/build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 向量数据库数据
+vector_data/
+*.faiss
+chroma_db/
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+# 日志文件
+*.log
+logs/
+
+# 测试覆盖率
+.coverage
+htmlcov/
+.pytest_cache/
+coverage/
