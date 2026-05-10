@@ -51,17 +51,29 @@ cp .env.example .env
 
 ### 5. 启动开发服务器
 
-**启动后端** (FastAPI):
+**方式一：一键启动（推荐）**
 ```bash
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+# Windows
+start-dev.bat
+
+# 或手动启动
 ```
 
-**启动前端** (React + Vite):
+**方式二：分别启动**
+
+启动后端 (FastAPI):
 ```bash
+uvicorn src.main:app --reload --host 0.0.0.0 --port 8001
+```
+
+启动前端 (React + Vite):
+```bash
+cd frontend
 npm run dev
 ```
 
 访问 http://localhost:5173 即可使用系统。
+API文档：http://localhost:8001/docs
 
 ## 项目结构
 
