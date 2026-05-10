@@ -1,14 +1,18 @@
-import React from 'react';
-import { List, Tag, Typography } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { List, Tag, Typography, Spin } from 'antd';
 import { FilePdfOutlined, FileMarkdownOutlined, FileTextOutlined, FileExcelOutlined, FileUnknownOutlined } from '@ant-design/icons';
+import axios from 'axios';
 
 const { Text } = Typography;
 
 interface FileItem {
-  id: string;
-  name: string;
+  file_id: string;
+  filename: string;
   size: number;
-  status: 'uploading' | 'done' | 'error';
+  status: string;
+  parse_status: string;
+  chapter_count: number;
+  error_message?: string;
 }
 
 const getFileIcon = (fileName: string) => {
@@ -20,6 +24,8 @@ const getFileIcon = (fileName: string) => {
       return <FileMarkdownOutlined style={{ color: '#1677ff' }} />;
     case 'txt':
       return <FileTextOutlined style={{ color: '#52c41a' }} />;
+    case 'docx':
+      return <FileTextOutlined style={{ color: '#722ed1' }} />;
     case 'xlsx':
     case 'xls':
       return <FileExcelOutlined style={{ color: '#52c41a' }} />;
@@ -36,25 +42,64 @@ const formatFileSize = (bytes: number): string => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
+const getParseStatusTag = (status: string, chapterCount: number, errorMessage?: string) => {
+  switch (status) {
+    case 'completed':
+      return <Tag color="green">已完成 ({chapterCount}章)</Tag>;
+    case 'parsing':
+      return <Tag color="blue"><Spin size="small" /> 解析中</Tag>;
+    case 'failed':
+      return <Tag color="red" title={errorMessage}>解析失败</Tag>;
+    case 'pending':
+    default:
+      return <Tag color="orange">等待解析</Tag>;
+  }
+};
+
 const FileList: React.FC = () => {
-  const fileList: FileItem[] = [];
+  const [fileList, setFileList] = useState<FileItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchFiles = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get('/api/files/');
+      setFileList(response.data);
+    } catch (error) {
+      console.error('Failed to fetch files:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFiles();
+    
+    // 定时刷新，检查解析状态
+    const interval = setInterval(fetchFiles, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <List
+      loading={loading}
       dataSource={fileList}
       locale={{ emptyText: '暂无上传文件' }}
       renderItem={(item) => (
         <List.Item
           actions={[
-            <Tag color={item.status === 'done' ? 'green' : item.status === 'error' ? 'red' : 'blue'}>
-              {item.status === 'done' ? '已完成' : item.status === 'error' ? '失败' : '解析中'}
-            </Tag>,
+            getParseStatusTag(item.parse_status, item.chapter_count, item.error_message),
           ]}
         >
           <List.Item.Meta
-            avatar={getFileIcon(item.name)}
-            title={<Text>{item.name}</Text>}
-            description={<Text type="secondary">{formatFileSize(item.size)}</Text>}
+            avatar={getFileIcon(item.filename)}
+            title={<Text>{item.filename}</Text>}
+            description={
+              <Text type="secondary">
+                {formatFileSize(item.size)}
+                {item.parse_status === 'completed' && ` · ${item.chapter_count} 个章节`}
+              </Text>
+            }
           />
         </List.Item>
       )}

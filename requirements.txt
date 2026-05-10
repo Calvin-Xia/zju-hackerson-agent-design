@@ -35,3 +35,4 @@ pydantic-settings==2.7.0     # 配置管理
 httpx==0.28.1                # HTTP客户端
 numpy==2.2.2                 # 数值计算
 scikit-learn==1.6.1          # 机器学习工具
+reportlab>=4.0               # PDF生成（测试用）
