@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from src.api.router import api_router
 from src.shared.config import settings
 from src.parsers import pdf_parser, markdown_parser, txt_parser, docx_parser
+from src.kg import extractor
 
 logging.basicConfig(
     level=logging.INFO,
