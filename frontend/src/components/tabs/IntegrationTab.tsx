@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Select, Typography, message, Progress, Spin } from 'antd';
+import { Button, Typography, message, Progress, Checkbox, Space } from 'antd';
 import { MergeOutlined } from '@ant-design/icons';
 import { fetchFiles, startIntegration, getIntegrationStatus, FileItem } from '../../api/client';
 
@@ -33,7 +33,7 @@ const IntegrationTab: React.FC = () => {
             message.error(`整合失败: ${status.error_message}`);
           }
         }
-      } catch (err) {
+      } catch {
         clearInterval(interval);
         setLoading(false);
       }
@@ -45,7 +45,7 @@ const IntegrationTab: React.FC = () => {
     try {
       const data = await fetchFiles();
       setFiles(data.filter(f => f.parse_status === 'completed'));
-    } catch (err) {
+    } catch {
       message.error('获取文件列表失败');
     }
   };
@@ -61,7 +61,7 @@ const IntegrationTab: React.FC = () => {
       setTaskId(result.task_id);
       setTaskStatus('running');
       localStorage.setItem('last_integration_task', result.task_id);
-    } catch (err) {
+    } catch {
       setLoading(false);
       message.error('启动整合失败');
     }
@@ -72,14 +72,17 @@ const IntegrationTab: React.FC = () => {
       <Text strong style={{ display: 'block', marginBottom: 12 }}>
         选择要整合的教材（至少2个）
       </Text>
-      <Select
-        mode="multiple"
-        placeholder="选择教材文件"
-        style={{ width: '100%', marginBottom: 16 }}
-        value={selectedFiles}
-        onChange={setSelectedFiles}
-        options={files.map(f => ({ label: f.filename, value: f.file_id }))}
-      />
+      <div style={{ marginBottom: 16, maxHeight: 200, overflow: 'auto', border: '1px solid #d9d9d9', borderRadius: 6, padding: 8 }}>
+        <Checkbox.Group
+          value={selectedFiles}
+          onChange={setSelectedFiles}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          {files.map(f => (
+            <Checkbox key={f.file_id} value={f.file_id}>{f.filename}</Checkbox>
+          ))}
+        </Checkbox.Group>
+      </div>
       {taskId && (
         <div style={{ marginBottom: 16 }}>
           <Text type="secondary">状态: {taskStatus}</Text>
