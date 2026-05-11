@@ -202,7 +202,7 @@ const KnowledgeGraphPanel: React.FC = () => {
         trigger: 'item',
         formatter: (params: any) => {
           if (params.dataType === 'node') {
-            return `<strong>${params.data.name}</strong><br/>分类: ${params.data.category}<br/>章节: ${params.data.chapter}<br/>频次: ${params.data.frequency}`;
+            return `<strong>${params.data.name}</strong><br/>分类: ${params.data.categoryName}<br/>章节: ${params.data.chapter || '无'}<br/>频次: ${params.data.frequency || 1}`;
           }
           if (params.dataType === 'edge') {
             return `${params.data.source} → ${params.data.target}<br/>关系: ${RELATION_LABELS[params.data.relation_type] || params.data.relation_type}`;
@@ -226,6 +226,9 @@ const KnowledgeGraphPanel: React.FC = () => {
           category: colorMode === 'category'
             ? categories.indexOf(node.category)
             : textbookIds.indexOf(node.textbook_id || 'unknown'),
+          categoryName: node.category,
+          chapter: node.chapter,
+          frequency: node.frequency,
           itemStyle: {
             color: colorMode === 'category'
               ? (CATEGORY_COLORS[node.category] || '#5470c6')
