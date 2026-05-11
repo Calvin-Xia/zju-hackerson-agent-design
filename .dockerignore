@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist
+build
+.pytest_cache
+
+# Node
+node_modules
+frontend/node_modules
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Data (will be mounted as volume)
+data/textbooks/*
+data/kg/*
+data/integration/*
+data/vectorstore/*
+data/dialogue/*
+data/embedding_cache/*
+
+# Documentation
+docs/
+report/
+*.md
+
+# Tests
+tests/
+
+# Phase files
+phase-*/
+
+# Misc
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
