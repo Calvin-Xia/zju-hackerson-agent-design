@@ -1,6 +1,15 @@
 # 教材数据（不上传到GitHub，单文件限制100MB）
 data/textbooks/*.pdf
+data/textbooks/*.docx
+data/textbooks/*.txt
+data/textbooks/*.md
+data/textbooks/*_parsed.json
+data/knowledge_graphs/*.json
 *.pdf
+
+# 测试产物
+frontend_test.png
+test_frontend.py
 
 # 环境变量（包含API密钥等敏感信息）
 .env

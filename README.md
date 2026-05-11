@@ -72,7 +72,7 @@ cd frontend
 npm run dev
 ```
 
-访问 http://localhost:5173 即可使用系统。
+访问 http://localhost:5174 即可使用系统。
 API文档：http://localhost:8001/docs
 
 ## 项目结构
