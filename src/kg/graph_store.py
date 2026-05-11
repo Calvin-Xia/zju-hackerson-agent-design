@@ -63,5 +63,33 @@ class KnowledgeGraphStore:
 
         return False
 
+    def update_node(self, file_id: str, node_id: str, updates: dict) -> bool:
+        """更新节点"""
+        graph = self.load(file_id)
+        if not graph:
+            return False
+        for node in graph.nodes:
+            if node.id == node_id:
+                for key, value in updates.items():
+                    if hasattr(node, key):
+                        setattr(node, key, value)
+                self.save(file_id, graph)
+                return True
+        return False
+
+    def update_relation(self, file_id: str, source: str, target: str, relation_type: str, updates: dict) -> bool:
+        """更新关系"""
+        graph = self.load(file_id)
+        if not graph:
+            return False
+        for rel in graph.relations:
+            if rel.source == source and rel.target == target and rel.relation_type == relation_type:
+                for key, value in updates.items():
+                    if hasattr(rel, key):
+                        setattr(rel, key, value)
+                self.save(file_id, graph)
+                return True
+        return False
+
 
 graph_store = KnowledgeGraphStore()

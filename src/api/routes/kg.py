@@ -51,6 +51,17 @@ class KnowledgeGraphResponse(BaseModel):
     links: list
 
 
+class NodeUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    definition: Optional[str] = None
+    category: Optional[str] = None
+
+
+class RelationUpdateRequest(BaseModel):
+    description: Optional[str] = None
+    confidence: Optional[float] = None
+
+
 def _load_textbook(file_id: str) -> Optional[Textbook]:
     """加载已解析的教材数据"""
     parsed_path = Path("data/textbooks") / f"{file_id}_parsed.json"
@@ -153,34 +164,62 @@ async def get_extraction_status(file_id: str):
 
 
 @router.get("/graph/{file_id}")
-async def get_knowledge_graph(file_id: str):
-    """获取知识图谱数据"""
+async def get_knowledge_graph(
+    file_id: str,
+    page: int = 1,
+    page_size: int = 100,
+    category: Optional[str] = None,
+):
+    """获取知识图谱数据（支持分页和筛选）"""
     graph = graph_store.load(file_id)
 
     if not graph:
         raise HTTPException(status_code=404, detail="Knowledge graph not found")
 
-    nodes = []
-    for node in graph.nodes:
-        nodes.append({
-            "id": node.id,
-            "name": node.name,
-            "definition": node.definition,
-            "category": node.category,
-            "chapter": node.chapter,
-            "frequency": node.frequency,
-        })
+    nodes = graph.nodes
+    if category:
+        nodes = [n for n in nodes if n.category == category]
 
-    links = []
-    for rel in graph.relations:
-        links.append({
-            "source": rel.source,
-            "target": rel.target,
-            "relation_type": rel.relation_type,
-            "description": rel.description,
-        })
+    total = len(nodes)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated_nodes = nodes[start:end]
 
-    return {"nodes": nodes, "links": links}
+    node_ids = {n.id for n in paginated_nodes}
+    related_relations = [r for r in graph.relations if r.source in node_ids or r.target in node_ids]
+
+    return {
+        "nodes": [node.model_dump() for node in paginated_nodes],
+        "links": [rel.model_dump() for rel in related_relations],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": (total + page_size - 1) // page_size,
+        },
+    }
+
+
+@router.put("/graph/{file_id}/node/{node_id}")
+async def update_node(file_id: str, node_id: str, request: NodeUpdateRequest):
+    updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    success = graph_store.update_node(file_id, node_id, updates)
+    if not success:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return {"message": "Node updated successfully"}
+
+
+@router.put("/graph/{file_id}/relation")
+async def update_relation(file_id: str, source: str, target: str, relation_type: str, request: RelationUpdateRequest):
+    updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    success = graph_store.update_relation(file_id, source, target, relation_type, updates)
+    if not success:
+        raise HTTPException(status_code=404, detail="Relation not found")
+    return {"message": "Relation updated successfully"}
 
 
 @router.get("/graphs")

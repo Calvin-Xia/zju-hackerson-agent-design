@@ -14,6 +14,7 @@ interface GraphNode {
   category: string;
   chapter: string;
   frequency: number;
+  textbook_id?: string;
 }
 
 interface GraphLink {
@@ -48,6 +49,17 @@ const RELATION_LABELS: Record<string, string> = {
   'applies_to': '应用关系',
 };
 
+const TEXTBOOK_COLORS = [
+  '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de',
+  '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#48b8d0',
+];
+
+const getTextbookColor = (textbookId: string | undefined, textbookIds: string[]): string => {
+  if (!textbookId) return TEXTBOOK_COLORS[0];
+  const index = textbookIds.indexOf(textbookId);
+  return TEXTBOOK_COLORS[index % TEXTBOOK_COLORS.length];
+};
+
 const KnowledgeGraphPanel: React.FC = () => {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
@@ -57,6 +69,11 @@ const KnowledgeGraphPanel: React.FC = () => {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [selectedRelation, setSelectedRelation] = useState<GraphLink | null>(null);
+  const [relationModalVisible, setRelationModalVisible] = useState(false);
+  const [colorMode, setColorMode] = useState<'category' | 'textbook'>('category');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const chartRef = useRef<ReactECharts>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchFiles = async () => {
@@ -143,12 +160,20 @@ const KnowledgeGraphPanel: React.FC = () => {
     };
   }, []);
 
-  const handleNodeClick = useCallback((params: any) => {
+  const handleChartClick = useCallback((params: any) => {
     if (params.dataType === 'node') {
       const node = graphData?.nodes.find(n => n.id === params.data.id);
       if (node) {
         setSelectedNode(node);
         setModalVisible(true);
+      }
+    } else if (params.dataType === 'edge') {
+      const link = graphData?.links.find(l =>
+        l.source === params.data.source && l.target === params.data.target
+      );
+      if (link) {
+        setSelectedRelation(link);
+        setRelationModalVisible(true);
       }
     }
   }, [graphData]);
@@ -169,6 +194,7 @@ const KnowledgeGraphPanel: React.FC = () => {
       : graphData.links;
 
     const categories = Array.from(new Set(graphData.nodes.map(n => n.category)));
+    const textbookIds = Array.from(new Set(graphData.nodes.map(n => n.textbook_id || 'unknown')));
 
     return {
       tooltip: {
@@ -184,7 +210,7 @@ const KnowledgeGraphPanel: React.FC = () => {
         },
       },
       legend: {
-        data: categories,
+        data: colorMode === 'category' ? categories : textbookIds,
         orient: 'vertical',
         right: 10,
         top: 10,
@@ -192,21 +218,26 @@ const KnowledgeGraphPanel: React.FC = () => {
       series: [{
         type: 'graph',
         layout: 'force',
-        data: filteredNodes.map(node => ({
-          ...node,
-          symbolSize: Math.max(20, Math.min(60, 20 + node.frequency * 10)),
-          category: categories.indexOf(node.category),
+        data: filteredNodes.map((node) => ({
+          id: node.id,
+          name: node.name,
+          symbolSize: Math.max(20, Math.min(60, 20 + (node.frequency || 1) * 10)),
+          category: colorMode === 'category'
+            ? categories.indexOf(node.category)
+            : textbookIds.indexOf(node.textbook_id || 'unknown'),
           itemStyle: {
-            color: CATEGORY_COLORS[node.category] || '#5470c6',
+            color: colorMode === 'category'
+              ? (CATEGORY_COLORS[node.category] || '#5470c6')
+              : getTextbookColor(node.textbook_id, textbookIds),
           },
         })),
         links: filteredLinks.map(link => ({
-          ...link,
-          lineStyle: {
-            curveness: 0.1,
-          },
+          source: link.source,
+          target: link.target,
         })),
-        categories: categories.map(name => ({ name })),
+        categories: colorMode === 'category'
+          ? categories.map(name => ({ name }))
+          : textbookIds.map(id => ({ name: id })),
         roam: true,
         draggable: true,
         label: {
@@ -235,7 +266,7 @@ const KnowledgeGraphPanel: React.FC = () => {
   };
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100%', minHeight: '500px', display: 'flex', flexDirection: 'column' }}>
       <Title level={4} style={{ marginBottom: 16 }}>
         知识图谱可视化
       </Title>
@@ -263,29 +294,91 @@ const KnowledgeGraphPanel: React.FC = () => {
               {extracting ? '提取中...' : '提取知识图谱'}
             </Button>
             {graphData && (
-              <Search
-                placeholder="搜索知识点"
-                allowClear
-                style={{ width: 200 }}
-                onSearch={setSearchKeyword}
-                onChange={e => setSearchKeyword(e.target.value)}
-              />
+              <>
+                <Search
+                  placeholder="搜索知识点"
+                  allowClear
+                  style={{ width: 200 }}
+                  onSearch={setSearchKeyword}
+                  onChange={e => setSearchKeyword(e.target.value)}
+                />
+                <Button
+                  type={colorMode === 'category' ? 'primary' : 'default'}
+                  size="small"
+                  onClick={() => setColorMode('category')}
+                >
+                  按分类
+                </Button>
+                <Button
+                  type={colorMode === 'textbook' ? 'primary' : 'default'}
+                  size="small"
+                  onClick={() => setColorMode('textbook')}
+                >
+                  按教材
+                </Button>
+              </>
             )}
           </Space>
         </Space>
       </Card>
 
-      <Card style={{ flex: 1, overflow: 'hidden' }} styles={{ body: { height: '100%', padding: '12px' } }}>
+      <Card
+        style={{
+          flex: 1,
+          overflow: 'hidden',
+          position: isFullscreen ? 'fixed' : 'relative',
+          top: isFullscreen ? 0 : undefined,
+          left: isFullscreen ? 0 : undefined,
+          width: isFullscreen ? '100vw' : undefined,
+          height: isFullscreen ? '100vh' : undefined,
+          zIndex: isFullscreen ? 1000 : undefined,
+          minHeight: 400,
+        }}
+        styles={{ body: { height: '100%', padding: '12px', position: 'relative' } }}
+      >
         {loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
             <Spin size="large" tip="加载中..." />
           </div>
         ) : graphData && graphData.nodes.length > 0 ? (
-          <ReactECharts
-            option={getChartOption()}
-            style={{ height: '100%', width: '100%' }}
-            onEvents={{ click: handleNodeClick }}
-          />
+          <>
+            <Space style={{ position: 'absolute', right: 16, top: 16, zIndex: 10 }}>
+              <Button
+                size="small"
+                onClick={() => {
+                  const instance = chartRef.current?.getEchartsInstance();
+                  if (instance) {
+                    instance.dispatchAction({ type: 'graphZoom', zoom: 1.2 });
+                  }
+                }}
+              >
+                放大
+              </Button>
+              <Button
+                size="small"
+                onClick={() => {
+                  const instance = chartRef.current?.getEchartsInstance();
+                  if (instance) {
+                    instance.dispatchAction({ type: 'graphZoom', zoom: 0.8 });
+                  }
+                }}
+              >
+                缩小
+              </Button>
+              <Button
+                size="small"
+                onClick={() => setIsFullscreen(!isFullscreen)}
+              >
+                {isFullscreen ? '退出全屏' : '全屏'}
+              </Button>
+            </Space>
+            <ReactECharts
+              ref={chartRef}
+              option={getChartOption()}
+              style={{ height: '100%', width: '100%' }}
+              onEvents={{ click: handleChartClick }}
+            />
+          </>
         ) : (
           <Empty
             description={selectedFileId ? '点击"提取知识图谱"按钮开始提取' : '请先选择一个教材文件'}
@@ -317,6 +410,35 @@ const KnowledgeGraphPanel: React.FC = () => {
             <Paragraph>
               <Text strong>章节: </Text>
               {selectedNode.chapter}
+            </Paragraph>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        title="关系详情"
+        open={relationModalVisible}
+        onCancel={() => setRelationModalVisible(false)}
+        footer={null}
+        width={400}
+      >
+        {selectedRelation && (
+          <div>
+            <Paragraph>
+              <Text strong>源节点: </Text>
+              {selectedRelation.source}
+            </Paragraph>
+            <Paragraph>
+              <Text strong>目标节点: </Text>
+              {selectedRelation.target}
+            </Paragraph>
+            <Paragraph>
+              <Text strong>关系类型: </Text>
+              <Tag>{RELATION_LABELS[selectedRelation.relation_type] || selectedRelation.relation_type}</Tag>
+            </Paragraph>
+            <Paragraph>
+              <Text strong>描述: </Text>
+              {selectedRelation.description}
             </Paragraph>
           </div>
         )}
