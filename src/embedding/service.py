@@ -10,6 +10,7 @@
 
 import hashlib
 import logging
+import os
 from typing import List, Optional, Union
 import numpy as np
 from pathlib import Path
@@ -71,12 +72,41 @@ class EmbeddingService:
         if self.model is None:
             try:
                 from sentence_transformers import SentenceTransformer
+                
+                # 设置HuggingFace镜像源
+                os.environ.setdefault('HF_ENDPOINT', 'https://hf-mirror.com')
+                
                 logger.info(f"Loading embedding model: {self.model_name}")
-                self.model = SentenceTransformer(self.model_name)
-                logger.info("Embedding model loaded successfully")
+                
+                # 尝试从本地缓存加载模型
+                try:
+                    self.model = SentenceTransformer(self.model_name, local_files_only=True)
+                    logger.info("Embedding model loaded from local cache")
+                except Exception as local_error:
+                    logger.warning(f"Failed to load from local cache: {local_error}")
+                    logger.info("Falling back to TF-IDF vectorizer")
+                    self._load_tfidf_fallback()
+                    
             except Exception as e:
-                logger.error(f"Failed to load embedding model: {e}")
-                raise
+                logger.warning(f"Failed to load SentenceTransformer model: {e}")
+                logger.info("Falling back to TF-IDF vectorizer")
+                self._load_tfidf_fallback()
+    
+    def _load_tfidf_fallback(self):
+        """加载TF-IDF备选方案"""
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            self.model = 'tfidf'
+            self.tfidf_vectorizer = TfidfVectorizer(
+                max_features=384,
+                ngram_range=(1, 2),
+                sublinear_tf=True
+            )
+            self.tfidf_fitted = False
+            logger.info("TF-IDF fallback loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load TF-IDF fallback: {e}")
+            raise
     
     def encode(self, texts: Union[str, List[str]], show_progress: bool = False) -> np.ndarray:
         """
@@ -112,12 +142,26 @@ class EmbeddingService:
         # 编码未缓存的文本
         if uncached_texts:
             logger.info(f"Encoding {len(uncached_texts)} uncached texts")
-            new_embeddings = self.model.encode(
-                uncached_texts,
-                show_progress_bar=show_progress,
-                convert_to_numpy=True,
-                normalize_embeddings=True
-            )
+            
+            if self.model == 'tfidf':
+                # 使用TF-IDF备选方案
+                if not self.tfidf_fitted:
+                    self.tfidf_vectorizer.fit(uncached_texts)
+                    self.tfidf_fitted = True
+                
+                new_embeddings = self.tfidf_vectorizer.transform(uncached_texts).toarray()
+                # 归一化
+                norms = np.linalg.norm(new_embeddings, axis=1, keepdims=True)
+                norms = np.where(norms == 0, 1, norms)
+                new_embeddings = new_embeddings / norms
+            else:
+                # 使用SentenceTransformer
+                new_embeddings = self.model.encode(
+                    uncached_texts,
+                    show_progress_bar=show_progress,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True
+                )
             
             # 更新缓存
             for idx, text, embedding in zip(uncached_indices, uncached_texts, new_embeddings):
