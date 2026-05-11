@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Select, Space, Typography } from 'antd';
+import { Button, Select, Typography } from 'antd';
 import { MergeOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;

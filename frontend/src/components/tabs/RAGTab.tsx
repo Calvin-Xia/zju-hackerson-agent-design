@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Input, Space, Typography } from 'antd';
+import { Button, Input, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;

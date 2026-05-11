@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Select, Button, Spin, Empty, Modal, Typography, Tag, message, Space, Input } from 'antd';
-import { RocketOutlined, SearchOutlined } from '@ant-design/icons';
+import { RocketOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import axios from 'axios';
 
@@ -181,22 +181,18 @@ const KnowledgeGraphPanel: React.FC = () => {
         type: 'graph',
         layout: 'force',
         data: filteredNodes.map(node => ({
-          id: node.id,
-          name: node.name,
+          ...node,
           symbolSize: Math.max(20, Math.min(60, 20 + node.frequency * 10)),
           category: categories.indexOf(node.category),
           itemStyle: {
             color: CATEGORY_COLORS[node.category] || '#5470c6',
           },
-          ...node,
         })),
         links: filteredLinks.map(link => ({
-          source: link.source,
-          target: link.target,
+          ...link,
           lineStyle: {
             curveness: 0.1,
           },
-          ...link,
         })),
         categories: categories.map(name => ({ name })),
         roam: true,

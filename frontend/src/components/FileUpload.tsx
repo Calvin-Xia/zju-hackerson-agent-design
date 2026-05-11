@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React from 'react';
 import { InboxOutlined } from '@ant-design/icons';
 import { Upload, message } from 'antd';
 import type { UploadProps } from 'antd';
