@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, Select, Button, Spin, Empty, Modal, Typography, Tag, message, Space, Input } from 'antd';
 import { RocketOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
@@ -57,6 +57,7 @@ const KnowledgeGraphPanel: React.FC = () => {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchFiles = async () => {
     try {
@@ -98,11 +99,13 @@ const KnowledgeGraphPanel: React.FC = () => {
 
           if (status === 'completed') {
             clearInterval(pollInterval);
+            pollIntervalRef.current = null;
             setExtracting(false);
             message.success('知识点提取完成！');
             fetchGraph(selectedFileId);
           } else if (status === 'failed') {
             clearInterval(pollInterval);
+            pollIntervalRef.current = null;
             setExtracting(false);
             message.error('知识点提取失败');
           }
@@ -110,6 +113,7 @@ const KnowledgeGraphPanel: React.FC = () => {
           console.error('Failed to poll status:', error);
         }
       }, 3000);
+      pollIntervalRef.current = pollInterval;
     } catch (error: any) {
       setExtracting(false);
       if (error.response?.data?.detail === 'Knowledge graph already exists') {
@@ -130,6 +134,14 @@ const KnowledgeGraphPanel: React.FC = () => {
       fetchGraph(selectedFileId);
     }
   }, [selectedFileId]);
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
 
   const handleNodeClick = useCallback((params: any) => {
     if (params.dataType === 'node') {

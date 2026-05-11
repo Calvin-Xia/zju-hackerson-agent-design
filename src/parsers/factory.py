@@ -30,8 +30,6 @@ async def parse_file(file_path: Path) -> Textbook:
     extension = file_path.suffix.lstrip('.')
     parser = get_parser(extension)
     
-    # 在线程池中运行同步解析器
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, parser.parse, file_path)
+    result = await asyncio.to_thread(parser.parse, file_path)
     
     return result

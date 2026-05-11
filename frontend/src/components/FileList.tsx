@@ -60,6 +60,10 @@ const FileList: React.FC = () => {
   const [fileList, setFileList] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(false);
 
+  const hasActiveParsing = fileList.some(
+    f => f.parse_status === 'parsing' || f.parse_status === 'pending'
+  );
+
   const fetchFiles = async () => {
     setLoading(true);
     try {
@@ -74,11 +78,14 @@ const FileList: React.FC = () => {
 
   useEffect(() => {
     fetchFiles();
-    
-    // 定时刷新，检查解析状态
+  }, []);
+
+  useEffect(() => {
+    if (!hasActiveParsing) return;
+
     const interval = setInterval(fetchFiles, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [hasActiveParsing]);
 
   return (
     <List

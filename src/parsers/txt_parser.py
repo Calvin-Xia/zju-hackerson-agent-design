@@ -6,15 +6,9 @@ from typing import List, Optional
 from src.models.textbook import Chapter, Textbook
 from src.parsers.base import BaseParser
 from src.parsers.factory import register_parser
+from src.parsers.constants import CHAPTER_PATTERNS
 
 logger = logging.getLogger(__name__)
-
-# 章节标题正则模式
-CHAPTER_PATTERNS = [
-    r"第[一二三四五六七八九十百千\d]+[章篇]",
-    r"Chapter\s+\d+",
-    r"CHAPTER\s+\d+",
-]
 
 
 class TxtParser(BaseParser):
@@ -26,6 +20,17 @@ class TxtParser(BaseParser):
         
         content = self._read_file(file_path)
         chapters = self._split_into_chapters(content)
+        
+        if not chapters:
+            chapters.append(Chapter(
+                chapter_id=self._generate_chapter_id(0),
+                title=self._extract_title_from_filename(file_path),
+                page_start=0,
+                page_end=0,
+                content=content,
+                char_count=len(content)
+            ))
+        
         total_chars = sum(ch.char_count for ch in chapters)
         
         return Textbook(
@@ -98,17 +103,6 @@ class TxtParser(BaseParser):
                     content=chapter_content,
                     char_count=len(chapter_content)
                 ))
-        
-        # 如果没有检测到章节，将整个文件作为一章
-        if not chapters:
-            chapters.append(Chapter(
-                chapter_id=self._generate_chapter_id(0),
-                title=self._extract_title_from_filename(Path("")),
-                page_start=0,
-                page_end=0,
-                content=content,
-                char_count=len(content)
-            ))
         
         return chapters
 

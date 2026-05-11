@@ -8,15 +8,9 @@ from docx import Document
 from src.models.textbook import Chapter, Textbook
 from src.parsers.base import BaseParser
 from src.parsers.factory import register_parser
+from src.parsers.constants import CHAPTER_PATTERNS
 
 logger = logging.getLogger(__name__)
-
-# 章节标题正则模式
-CHAPTER_PATTERNS = [
-    r"第[一二三四五六七八九十百千\d]+[章篇]",
-    r"Chapter\s+\d+",
-    r"CHAPTER\s+\d+",
-]
 
 
 class DocxParser(BaseParser):
@@ -29,6 +23,18 @@ class DocxParser(BaseParser):
         try:
             doc = Document(str(file_path))
             chapters = self._extract_chapters(doc)
+            
+            if not chapters:
+                full_text = '\n'.join(p.text for p in doc.paragraphs if p.text.strip())
+                chapters.append(Chapter(
+                    chapter_id=self._generate_chapter_id(0),
+                    title=self._extract_title_from_filename(file_path),
+                    page_start=0,
+                    page_end=0,
+                    content=full_text,
+                    char_count=len(full_text)
+                ))
+            
             total_chars = sum(ch.char_count for ch in chapters)
             
             return Textbook(
@@ -94,18 +100,6 @@ class DocxParser(BaseParser):
                     content=content,
                     char_count=len(content)
                 ))
-        
-        # 如果没有检测到章节，将整个文件作为一章
-        if not chapters:
-            full_text = '\n'.join(p.text for p in doc.paragraphs if p.text.strip())
-            chapters.append(Chapter(
-                chapter_id=self._generate_chapter_id(0),
-                title=self._extract_title_from_filename(Path("")),
-                page_start=0,
-                page_end=0,
-                content=full_text,
-                char_count=len(full_text)
-            ))
         
         return chapters
 

@@ -7,25 +7,33 @@ from src.shared.config import settings
 
 logger = logging.getLogger(__name__)
 
+_client_cache: dict[str, AsyncOpenAI] = {}
+
 
 def get_llm_client() -> AsyncOpenAI:
-    """获取LLM客户端实例"""
+    """获取LLM客户端实例（带缓存）"""
     provider = settings.LLM_PROVIDER.lower()
 
+    if provider in _client_cache:
+        return _client_cache[provider]
+
     if provider == "deepseek":
-        return AsyncOpenAI(
+        client = AsyncOpenAI(
             api_key=settings.DEEPSEEK_API_KEY,
             base_url="https://api.deepseek.com",
         )
     elif provider == "openai":
-        return AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
     elif provider == "dashscope":
-        return AsyncOpenAI(
+        client = AsyncOpenAI(
             api_key=settings.DASHSCOPE_API_KEY,
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
+
+    _client_cache[provider] = client
+    return client
 
 
 def get_model_name() -> str:

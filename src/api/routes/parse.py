@@ -16,6 +16,34 @@ router = APIRouter()
 _parse_status: dict[str, dict] = {}
 
 
+def rebuild_parse_status_from_files():
+    """启动时从文件系统重建解析状态，避免重启后状态丢失"""
+    data_dir = Path("data/textbooks")
+    if not data_dir.exists():
+        return
+
+    count = 0
+    for parsed_file in data_dir.glob("*_parsed.json"):
+        file_id = parsed_file.name.replace("_parsed.json", "")
+        try:
+            with open(parsed_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            chapter_count = len(data.get("chapters", []))
+            total_chars = data.get("total_chars", 0)
+            _parse_status[file_id] = {
+                "status": ParseStatus.COMPLETED.value,
+                "error_message": None,
+                "chapter_count": chapter_count,
+                "total_chars": total_chars,
+            }
+            count += 1
+        except Exception as e:
+            logger.warning(f"Failed to rebuild parse status from {parsed_file}: {e}")
+
+    if count > 0:
+        logger.info(f"Rebuilt parse status for {count} files from disk")
+
+
 class ParseStatusResponse(BaseModel):
     file_id: str
     status: str

@@ -23,6 +23,17 @@ class MarkdownParser(BaseParser):
             content = file_path.read_text(encoding='gbk')
         
         chapters = self._split_into_chapters(content)
+        
+        if not chapters:
+            chapters.append(Chapter(
+                chapter_id=self._generate_chapter_id(0),
+                title=self._extract_title_from_filename(file_path),
+                page_start=0,
+                page_end=0,
+                content=content,
+                char_count=len(content)
+            ))
+        
         total_chars = sum(ch.char_count for ch in chapters)
         
         return Textbook(
@@ -84,17 +95,6 @@ class MarkdownParser(BaseParser):
                     content=chapter_content,
                     char_count=len(chapter_content)
                 ))
-        
-        # 如果没有检测到章节，将整个文件作为一章
-        if not chapters:
-            chapters.append(Chapter(
-                chapter_id=self._generate_chapter_id(0),
-                title=self._extract_title_from_filename(Path("")),
-                page_start=0,
-                page_end=0,
-                content=content,
-                char_count=len(content)
-            ))
         
         return chapters
 

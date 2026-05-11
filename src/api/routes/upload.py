@@ -47,7 +47,8 @@ async def upload_file(file: UploadFile = File(...)):
         )
 
     file_id = str(uuid.uuid4())
-    file_path = Path("data/textbooks") / f"{file_id}_{file.filename}"
+    safe_filename = Path(file.filename).name
+    file_path = Path("data/textbooks") / f"{file_id}_{safe_filename}"
 
     try:
         with open(file_path, "wb") as f:
@@ -59,7 +60,8 @@ async def upload_file(file: UploadFile = File(...)):
 
     # 异步触发解析
     update_parse_status(file_id, ParseStatus.PENDING)
-    asyncio.create_task(_parse_file_async(file_id, file_path))
+    task = asyncio.create_task(_parse_file_async(file_id, file_path))
+    task.add_done_callback(lambda t: logger.error(f"Parse task failed: {t.exception()}") if t.exception() else None)
 
     return UploadResponse(
         file_id=file_id,

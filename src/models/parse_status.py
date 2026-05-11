@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -20,7 +20,7 @@ class FileInfo(BaseModel):
     status: ParseStatus = Field(ParseStatus.PENDING, description="解析状态")
     error_message: Optional[str] = Field(None, description="错误信息")
     chapter_count: int = Field(0, description="章节数量")
-    created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc), description="创建时间")
 
     class Config:
         json_schema_extra = {

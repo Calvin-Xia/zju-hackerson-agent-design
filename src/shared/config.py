@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"]
 
     DASHSCOPE_API_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     VECTOR_DB_PATH: str = "./vector_data"
 
     MAX_UPLOAD_SIZE_MB: int = 200
-    ALLOWED_EXTENSIONS: List[str] = ["pdf", "md", "txt", "docx", "xlsx"]
+    ALLOWED_EXTENSIONS: List[str] = ["pdf", "md", "txt", "docx"]
 
     CHUNK_SIZE: int = 600
     CHUNK_OVERLAP: int = 100

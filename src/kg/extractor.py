@@ -66,8 +66,8 @@ def parse_llm_response(response: str) -> dict:
             end = response.rfind('}') + 1
             if start >= 0 and end > start:
                 return json.loads(response[start:end])
-        except:
-            pass
+        except Exception as parse_err:
+            logger.warning(f"Failed to extract JSON from response fragment: {parse_err}")
 
         raise ValueError(f"Invalid JSON response from LLM: {e}")
 

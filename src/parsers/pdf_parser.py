@@ -8,15 +8,9 @@ import pdfplumber
 from src.models.textbook import Chapter, Textbook
 from src.parsers.base import BaseParser
 from src.parsers.factory import register_parser
+from src.parsers.constants import CHAPTER_PATTERNS
 
 logger = logging.getLogger(__name__)
-
-# 章节标题正则模式
-CHAPTER_PATTERNS = [
-    r"第[一二三四五六七八九十百千\d]+[章篇]",
-    r"Chapter\s+\d+",
-    r"CHAPTER\s+\d+",
-]
 
 
 class PdfParser(BaseParser):

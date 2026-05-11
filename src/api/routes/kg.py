@@ -19,6 +19,24 @@ router = APIRouter()
 _extraction_status: Dict[str, ExtractionTaskStatus] = {}
 
 
+def rebuild_extraction_status_from_files():
+    """启动时从已保存的图谱文件重建提取状态"""
+    file_ids = graph_store.list_graphs()
+    count = 0
+    for file_id in file_ids:
+        graph = graph_store.load(file_id)
+        if graph:
+            _extraction_status[file_id] = ExtractionTaskStatus(
+                file_id=file_id,
+                status=ExtractionStatus.COMPLETED,
+                progress=100.0,
+            )
+            count += 1
+
+    if count > 0:
+        logger.info(f"Rebuilt extraction status for {count} graphs from disk")
+
+
 class ExtractRequest(BaseModel):
     file_id: str
 
@@ -100,7 +118,8 @@ async def extract_knowledge(request: ExtractRequest):
         status=ExtractionStatus.PENDING,
     )
 
-    asyncio.create_task(_extract_async(file_id))
+    task = asyncio.create_task(_extract_async(file_id))
+    task.add_done_callback(lambda t: logger.error(f"Extraction task failed: {t.exception()}") if t.exception() else None)
 
     return ExtractResponse(
         file_id=file_id,
