@@ -171,6 +171,11 @@ async def get_knowledge_graph(
     category: Optional[str] = None,
 ):
     """获取知识图谱数据（支持分页和筛选）"""
+    if page < 1:
+        raise HTTPException(status_code=400, detail="Page must be >= 1")
+    if page_size < 1 or page_size > 1000:
+        raise HTTPException(status_code=400, detail="Page size must be between 1 and 1000")
+    
     graph = graph_store.load(file_id)
 
     if not graph:

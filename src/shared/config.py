@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8001
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    DEBUG: bool = True  # 生产环境请设置为 False
 
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"]
 

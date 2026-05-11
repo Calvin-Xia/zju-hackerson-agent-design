@@ -83,6 +83,7 @@ const KnowledgeGraphPanel: React.FC = () => {
       setFiles(parsedFiles);
     } catch (error) {
       console.error('Failed to fetch files:', error);
+      message.error('获取文件列表失败');
     }
   };
 

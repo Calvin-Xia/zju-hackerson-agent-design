@@ -23,10 +23,13 @@ from src.vectorstore.faiss_store import get_vector_store
 from src.rag.qa import get_qa_instance, QAResponse
 from src.parsers.factory import parse_file
 from src.shared.config import settings
+from src.shared.state_store import get_indexing_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+state_store = get_indexing_store()
 
 
 class IndexRequest(BaseModel):
@@ -54,17 +57,14 @@ class IndexStatus(BaseModel):
     is_ready: bool
 
 
-indexing_tasks: Dict[str, Dict[str, Any]] = {}
-
-
 async def _index_files(task_id: str, file_ids: List[str]):
     """异步建立索引"""
     try:
-        indexing_tasks[task_id] = {
+        state_store.set(task_id, {
             "status": "processing",
             "progress": 0.0,
             "error_message": None
-        }
+        })
         
         chunker = TextChunker(
             chunk_size=settings.CHUNK_SIZE,
@@ -91,7 +91,7 @@ async def _index_files(task_id: str, file_ids: List[str]):
             chunks = chunker.chunk_textbook(textbook)
             all_chunks.extend(chunks)
             
-            indexing_tasks[task_id]["progress"] = (i + 1) / len(file_ids) * 50
+            state_store.update(task_id, {"progress": (i + 1) / len(file_ids) * 50})
         
         if not all_chunks:
             raise ValueError("No valid chunks generated")
@@ -104,23 +104,23 @@ async def _index_files(task_id: str, file_ids: List[str]):
         
         vector_store.save("default")
         
-        indexing_tasks[task_id] = {
+        state_store.set(task_id, {
             "status": "completed",
             "progress": 100.0,
             "error_message": None,
             "total_chunks": len(all_chunks),
             "indexed_textbooks": len(file_ids)
-        }
+        })
         
         logger.info(f"Indexing completed: {len(all_chunks)} chunks from {len(file_ids)} textbooks")
         
     except Exception as e:
         logger.error(f"Indexing failed: {e}")
-        indexing_tasks[task_id] = {
+        state_store.update(task_id, {
             "status": "failed",
             "progress": 0.0,
             "error_message": str(e)
-        }
+        })
 
 
 @router.post("/index", response_model=IndexResponse)

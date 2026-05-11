@@ -23,10 +23,13 @@ from src.integration.decision import DecisionMaker, DecisionResult, IntegrationD
 from src.integration.compression import CompressionController, CompressionStats
 from src.kg.graph_store import graph_store
 from src.kg.models import KnowledgeGraph
+from src.shared.state_store import get_integration_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+state_store = get_integration_store()
 
 
 class MergeRequest(BaseModel):
@@ -69,48 +72,14 @@ class StatisticsResponse(BaseModel):
     compressed_relation_count: int
 
 
-integration_tasks: Dict[str, Dict[str, Any]] = {}
-integration_results: Dict[str, Dict[str, Any]] = {}
-
-
-def _save_integration_result(task_id: str, result: Dict[str, Any]):
-    """保存整合结果到文件"""
-    result_dir = Path("data/integration")
-    result_dir.mkdir(parents=True, exist_ok=True)
-    
-    result_file = result_dir / f"{task_id}.json"
-    with open(result_file, 'w', encoding='utf-8') as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
-    
-    integration_results[task_id] = result
-
-
-def _load_integration_result(task_id: str) -> Optional[Dict[str, Any]]:
-    """从文件加载整合结果"""
-    if task_id in integration_results:
-        return integration_results[task_id]
-    
-    result_file = Path("data/integration") / f"{task_id}.json"
-    if result_file.exists():
-        try:
-            with open(result_file, 'r', encoding='utf-8') as f:
-                result = json.load(f)
-            integration_results[task_id] = result
-            return result
-        except Exception as e:
-            logger.error(f"Failed to load integration result: {e}")
-    
-    return None
-
-
 async def _run_integration(task_id: str, textbook_ids: List[str]):
     """异步执行整合任务"""
     try:
-        integration_tasks[task_id] = {
+        state_store.set(task_id, {
             "status": "processing",
             "progress": 0.0,
             "error_message": None
-        }
+        })
         
         graphs: Dict[str, KnowledgeGraph] = {}
         for file_id in textbook_ids:
@@ -121,7 +90,7 @@ async def _run_integration(task_id: str, textbook_ids: List[str]):
         if not graphs:
             raise ValueError("No valid knowledge graphs found")
         
-        integration_tasks[task_id]["progress"] = 10.0
+        state_store.update(task_id, {"progress": 10.0})
         
         all_nodes = []
         nodes_map = {}
@@ -138,7 +107,7 @@ async def _run_integration(task_id: str, textbook_ids: List[str]):
         aligner = SemanticAligner(similarity_threshold=0.7, use_llm_verification=False)
         alignment_results = await aligner.align_multiple_textbooks(textbook_nodes)
         
-        integration_tasks[task_id]["progress"] = 40.0
+        state_store.update(task_id, {"progress": 40.0})
         
         all_aligned_pairs = []
         for result in alignment_results:
@@ -149,7 +118,7 @@ async def _run_integration(task_id: str, textbook_ids: List[str]):
             all_aligned_pairs, nodes_map
         )
         
-        integration_tasks[task_id]["progress"] = 70.0
+        state_store.update(task_id, {"progress": 70.0})
         
         controller = CompressionController()
         original_nodes = all_nodes
@@ -186,7 +155,7 @@ async def _run_integration(task_id: str, textbook_ids: List[str]):
             compressed_nodes, compressed_relations
         )
         
-        integration_tasks[task_id]["progress"] = 90.0
+        state_store.update(task_id, {"progress": 90.0})
         
         result = {
             "task_id": task_id,
@@ -210,23 +179,23 @@ async def _run_integration(task_id: str, textbook_ids: List[str]):
             "compressed_relations": [r.model_dump() for r in compressed_relations]
         }
         
-        _save_integration_result(task_id, result)
+        state_store.set(task_id, result)
         
-        integration_tasks[task_id] = {
+        state_store.update(task_id, {
             "status": "completed",
             "progress": 100.0,
             "error_message": None
-        }
+        })
         
         logger.info(f"Integration task {task_id} completed")
         
     except Exception as e:
         logger.error(f"Integration task {task_id} failed: {e}")
-        integration_tasks[task_id] = {
+        state_store.update(task_id, {
             "status": "failed",
             "progress": 0.0,
             "error_message": str(e)
-        }
+        })
 
 
 @router.post("/merge", response_model=MergeResponse)
@@ -253,21 +222,13 @@ async def start_merge(request: MergeRequest, background_tasks: BackgroundTasks):
 @router.get("/status/{task_id}", response_model=TaskStatus)
 async def get_integration_status(task_id: str):
     """获取整合状态"""
-    if task_id in integration_tasks:
-        task = integration_tasks[task_id]
+    task = state_store.get(task_id)
+    if task:
         return TaskStatus(
             task_id=task_id,
-            status=task["status"],
-            progress=task["progress"],
+            status=task.get("status", "unknown"),
+            progress=task.get("progress", 0.0),
             error_message=task.get("error_message")
-        )
-    
-    result = _load_integration_result(task_id)
-    if result:
-        return TaskStatus(
-            task_id=task_id,
-            status="completed",
-            progress=100.0
         )
     
     raise HTTPException(status_code=404, detail="Integration task not found")
@@ -276,7 +237,7 @@ async def get_integration_status(task_id: str):
 @router.get("/decisions/{task_id}", response_model=List[DecisionResponse])
 async def get_integration_decisions(task_id: str):
     """获取整合决策"""
-    result = _load_integration_result(task_id)
+    result = state_store.get(task_id)
     if not result:
         raise HTTPException(status_code=404, detail="Integration result not found")
     
@@ -297,7 +258,7 @@ async def get_integration_decisions(task_id: str):
 @router.get("/statistics/{task_id}", response_model=StatisticsResponse)
 async def get_integration_statistics(task_id: str):
     """获取整合统计"""
-    result = _load_integration_result(task_id)
+    result = state_store.get(task_id)
     if not result:
         raise HTTPException(status_code=404, detail="Integration result not found")
     
@@ -308,7 +269,7 @@ async def get_integration_statistics(task_id: str):
 @router.get("/graph/{task_id}")
 async def get_integrated_graph(task_id: str):
     """获取整合后的知识图谱"""
-    result = _load_integration_result(task_id)
+    result = state_store.get(task_id)
     if not result:
         raise HTTPException(status_code=404, detail="Integration result not found")
     

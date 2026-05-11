@@ -1,7 +1,8 @@
 import logging
 from typing import Optional
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIError, APITimeoutError
+import httpx
 
 from src.shared.config import settings
 
@@ -85,8 +86,16 @@ async def call_llm(
 
             return content.strip()
 
+        except (APIError, APITimeoutError) as e:
+            logger.error(f"LLM API error (attempt {attempt + 1}): {e}")
+            if attempt == max_retries - 1:
+                raise
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error (attempt {attempt + 1}): {e}")
+            if attempt == max_retries - 1:
+                raise
         except Exception as e:
-            logger.error(f"LLM call failed (attempt {attempt + 1}): {e}")
+            logger.error(f"Unexpected error (attempt {attempt + 1}): {e}")
             if attempt == max_retries - 1:
                 raise
 

@@ -152,15 +152,23 @@ class SemanticAligner:
             response = await call_llm(prompt=prompt, system_prompt="你是一个教育知识专家，擅长判断知识点的等价性。")
             
             import json
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.startswith("```"):
-                response = response[3:]
-            if response.endswith("```"):
-                response = response[:-3]
+            import re
             
-            result = json.loads(response.strip())
+            response = response.strip()
+            
+            # 尝试提取JSON块
+            json_match = re.search(r'\{[^{}]*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                # 尝试清理markdown标记
+                if response.startswith("```json"):
+                    response = response[7:]
+                if response.startswith("```"):
+                    response = response[3:]
+                if response.endswith("```"):
+                    response = response[:-3]
+                result = json.loads(response.strip())
             
             return (
                 result.get("is_equivalent", False),

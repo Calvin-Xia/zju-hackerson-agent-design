@@ -34,6 +34,8 @@ class EmbeddingService:
         self.cache_dir = Path(cache_dir) if cache_dir else Path("data/embedding_cache")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, np.ndarray] = {}
+        self._dirty_count = 0
+        self._save_threshold = 10  # 每10次更新保存一次
         self._load_cache()
     
     def _load_cache(self):
@@ -122,9 +124,12 @@ class EmbeddingService:
                 cache_key = self._get_cache_key(text)
                 self._cache[cache_key] = embedding
                 results[idx] = embedding
+                self._dirty_count += 1
             
-            # 保存缓存
-            self._save_cache()
+            # 批量保存缓存
+            if self._dirty_count >= self._save_threshold:
+                self._save_cache()
+                self._dirty_count = 0
         
         results_array = np.array(results, dtype=np.float32)
         

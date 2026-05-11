@@ -34,6 +34,7 @@ class FAISSVectorStore:
         
         self.index = None
         self.chunk_metadata: List[Dict[str, Any]] = []
+        self._vectors: Optional[np.ndarray] = None
         self._initialize_index()
     
     def _initialize_index(self):
@@ -64,7 +65,7 @@ class FAISSVectorStore:
         if self.index is not None:
             self.index.add(normalized_vectors.astype(np.float32))
         else:
-            if not hasattr(self, '_vectors'):
+            if self._vectors is None:
                 self._vectors = normalized_vectors
             else:
                 self._vectors = np.vstack([self._vectors, normalized_vectors])
@@ -93,7 +94,7 @@ class FAISSVectorStore:
             similarities, indices = self.index.search(query_vector, min(top_k, self.index.ntotal))
             results = [(int(idx), float(sim)) for idx, sim in zip(indices[0], similarities[0]) if idx >= 0]
         else:
-            if not hasattr(self, '_vectors') or len(self._vectors) == 0:
+            if self._vectors is None or len(self._vectors) == 0:
                 return []
             
             similarities = np.dot(self._vectors, query_vector.T).flatten()
