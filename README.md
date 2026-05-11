@@ -127,29 +127,35 @@ API文档：http://localhost:8001/docs
 ## API 接口
 
 ### 教材管理
-- `POST /api/upload` - 上传教材文件
-- `GET /api/files` - 获取文件列表
+- `POST /api/upload/` - 上传教材文件
+- `GET /api/files/` - 获取文件列表
 - `GET /api/parse/status/{file_id}` - 查询解析状态
 
 ### 知识图谱
 - `POST /api/kg/extract` - 提取知识点
-- `GET /api/kg/{textbook_id}` - 获取知识图谱
-- `GET /api/kg/extract/status/{task_id}` - 查询提取状态
+- `GET /api/kg/graph/{file_id}` - 获取知识图谱（支持分页和筛选）
+- `GET /api/kg/status/{file_id}` - 查询提取状态
+- `PUT /api/kg/graph/{file_id}/node/{node_id}` - 更新节点
+- `PUT /api/kg/graph/{file_id}/relation` - 更新关系
 
 ### 跨教材整合
 - `POST /api/integration/merge` - 执行整合
 - `GET /api/integration/status/{task_id}` - 查询整合状态
-- `GET /api/integration/decisions` - 查询整合决策
+- `GET /api/integration/decisions/{task_id}` - 查询整合决策
+- `GET /api/integration/statistics/{task_id}` - 查询整合统计
+- `GET /api/integration/graph/{task_id}` - 获取整合后图谱
 
 ### RAG 问答
 - `POST /api/rag/index` - 建立向量索引
 - `POST /api/rag/query` - 提问
 - `GET /api/rag/status` - 查询索引状态
+- `DELETE /api/rag/index` - 清空索引
 
 ### 多轮对话
 - `POST /api/dialogue/chat` - 发送消息
 - `POST /api/dialogue/feedback` - 提交反馈
-- `GET /api/dialogue/history` - 获取对话历史
+- `GET /api/dialogue/history/{conversation_id}` - 获取对话历史
+- `DELETE /api/dialogue/history/{conversation_id}` - 清空对话历史
 
 ## 技术栈
 
@@ -183,6 +189,39 @@ API文档：http://localhost:8001/docs
 4. **RAG 问答**: 切换到"RAG问答"Tab，输入问题获取带引用的回答
 5. **对话优化**: 切换到"对话"Tab，通过自然语言修改整合方案
 6. **查看报告**: 切换到"报告"Tab，查看整合统计和报告
+
+## 测试
+
+### 运行后端测试
+
+```bash
+# 运行所有测试
+python -m pytest tests/ -v
+
+# 运行特定测试
+python -m pytest tests/test_graph_store.py -v
+python -m pytest tests/test_integration.py -v
+python -m pytest tests/test_rag.py -v
+python -m pytest tests/test_dialogue.py -v
+```
+
+### 测试覆盖
+
+| 模块 | 测试文件 | 测试数量 | 说明 |
+|------|----------|----------|------|
+| 知识图谱存储 | test_graph_store.py | 14 | CRUD操作、更新、删除 |
+| 跨教材整合 | test_integration.py | 11 | 语义对齐、决策生成、压缩比 |
+| RAG问答 | test_rag.py | 11 | 文档分块、向量存储、问答 |
+| 多轮对话 | test_dialogue.py | 14 | 上下文管理、API端点 |
+
+**总计**：50个测试用例
+
+## 文档
+
+- [Agent架构说明](docs/Agent架构说明.md) - 系统架构设计和设计决策
+- [需求分析](docs/需求分析.md) - 功能需求和非功能需求
+- [系统设计](docs/系统设计.md) - 技术选型和API接口设计
+- [整合报告](report/整合报告.md) - 跨教材整合案例分析
 
 ## License
 
