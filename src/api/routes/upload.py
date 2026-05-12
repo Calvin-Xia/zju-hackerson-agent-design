@@ -30,6 +30,7 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="No filename provided")
 
     extension = file.filename.split(".")[-1].lower()
+    logger.debug(f"Upload request: filename={file.filename}, extension={extension}")
     if extension not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,

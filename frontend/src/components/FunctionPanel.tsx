@@ -39,6 +39,7 @@ const FunctionPanel: React.FC = () => {
       <Card styles={{ body: { padding: '12px' } }}>
         <Tabs
           defaultActiveKey="integration"
+          destroyInactiveTabPane
           items={tabItems}
           style={{ height: '100%' }}
         />

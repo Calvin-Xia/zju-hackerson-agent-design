@@ -10,10 +10,11 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.router import api_router
 from src.shared.config import settings
-from src.parsers import pdf_parser, markdown_parser, txt_parser, docx_parser
+from src.parsers import pdf_parser, markdown_parser, txt_parser, docx_parser, xlsx_parser
 from src.kg import extractor
 from src.api.routes.parse import rebuild_parse_status_from_files
 from src.api.routes.kg import rebuild_extraction_status_from_files
+from src.vectorstore.faiss_store import get_vector_store
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +30,9 @@ async def lifespan(app: FastAPI):
     data_dir.mkdir(parents=True, exist_ok=True)
     rebuild_parse_status_from_files()
     rebuild_extraction_status_from_files()
+    vector_store = get_vector_store()
+    vector_store.load("default")
+    logger.info(f"Loaded vector store with {len(vector_store.chunk_metadata)} chunks")
     yield
     logger.info("Shutting down...")
 

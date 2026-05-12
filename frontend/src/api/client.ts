@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:8001/api';
+const API_BASE = '/api';
 
 export interface FileItem {
   file_id: string;
@@ -23,9 +23,18 @@ export interface RAGStatus {
   is_ready: boolean;
 }
 
+export interface Citation {
+  chunk_id: string;
+  textbook: string;
+  chapter: string;
+  page: number;
+  content: string;
+  relevance_score: number;
+}
+
 export interface QueryResponse {
   answer: string;
-  citations: Array<{ source: string; text: string }>;
+  citations: Citation[];
   source_chunks: string[];
 }
 
@@ -41,10 +50,18 @@ export interface HistoryResponse {
 }
 
 export interface Statistics {
-  total_files: number;
-  total_nodes: number;
-  total_relations: number;
+  original_textbook_count: number;
+  total_original_chars: number;
+  total_compressed_chars: number;
   compression_ratio: number;
+  total_decisions: number;
+  merge_count: number;
+  keep_count: number;
+  remove_count: number;
+  original_node_count: number;
+  compressed_node_count: number;
+  original_relation_count: number;
+  compressed_relation_count: number;
 }
 
 export async function fetchFiles(): Promise<FileItem[]> {

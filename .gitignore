@@ -3,13 +3,23 @@ data/textbooks/*.pdf
 data/textbooks/*.docx
 data/textbooks/*.txt
 data/textbooks/*.md
+data/textbooks/*.xlsx
 data/textbooks/*_parsed.json
 data/knowledge_graphs/*.json
 *.pdf
 
+# 嵌入缓存和向量存储
+data/embedding_cache/
+data/vectorstore/
+data/tasks/
+data/dialogue/
+
 # 测试产物
 frontend_test.png
 test_frontend.py
+test*.xlsx
+test*.docx
+output/playwright/
 
 # 环境变量（包含API密钥等敏感信息）
 .env
@@ -59,6 +69,10 @@ temp/
 # 日志文件
 *.log
 logs/
+backend_*.log
+
+# Pickle文件
+*.pkl
 
 # 测试覆盖率
 .coverage

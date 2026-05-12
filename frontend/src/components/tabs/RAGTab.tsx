@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Input, Typography, message, List, Tag, Spin } from 'antd';
 import { SearchOutlined, BuildOutlined } from '@ant-design/icons';
-import { fetchFiles, buildRAGIndex, queryRAG, getRAGStatus, FileItem, QueryResponse, RAGStatus } from '../../api/client';
+import { fetchFiles, buildRAGIndex, queryRAG, getRAGStatus, FileItem, QueryResponse, RAGStatus, Citation } from '../../api/client';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -115,10 +115,10 @@ const RAGTab: React.FC = () => {
               <List
                 size="small"
                 dataSource={result.citations}
-                renderItem={(item, idx) => (
+                renderItem={(item: Citation, idx) => (
                   <List.Item>
-                    <Tag color="blue">{item.source}</Tag>
-                    <Text ellipsis style={{ flex: 1 }}>{item.text}</Text>
+                    <Tag color="blue">{item.textbook}, {item.chapter}</Tag>
+                    <Text ellipsis style={{ flex: 1 }}>{item.content}</Text>
                   </List.Item>
                 )}
               />

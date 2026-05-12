@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     VECTOR_DB_PATH: str = "./vector_data"
 
     MAX_UPLOAD_SIZE_MB: int = 200
-    ALLOWED_EXTENSIONS: List[str] = ["pdf", "md", "txt", "docx"]
+    ALLOWED_EXTENSIONS: List[str] = ["pdf", "md", "txt", "docx", "xlsx"]
 
     CHUNK_SIZE: int = 600
     CHUNK_OVERLAP: int = 100

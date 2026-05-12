@@ -73,6 +73,7 @@ async def _index_files(task_id: str, file_ids: List[str]):
         
         embedding_service = get_embedding_service()
         vector_store = get_vector_store()
+        vector_store.clear()
         
         all_chunks: List[DocumentChunk] = []
         

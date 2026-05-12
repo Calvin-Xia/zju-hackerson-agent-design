@@ -15,6 +15,7 @@ from typing import List, Optional, Union
 import numpy as np
 from pathlib import Path
 import json
+import pickle
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,9 @@ class EmbeddingService:
                 with open(cache_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 for key, vector_list in data.items():
-                    self._cache[key] = np.array(vector_list, dtype=np.float32)
+                    vec = np.array(vector_list, dtype=np.float32)
+                    if vec.ndim == 1:
+                        self._cache[key] = vec
                 logger.info(f"Loaded {len(self._cache)} cached embeddings")
             except Exception as e:
                 logger.warning(f"Failed to load embedding cache: {e}")
@@ -97,13 +100,31 @@ class EmbeddingService:
         try:
             from sklearn.feature_extraction.text import TfidfVectorizer
             self.model = 'tfidf'
-            self.tfidf_vectorizer = TfidfVectorizer(
-                max_features=384,
-                ngram_range=(1, 2),
-                sublinear_tf=True
-            )
-            self.tfidf_fitted = False
-            logger.info("TF-IDF fallback loaded successfully")
+            self.embedding_dim = 384
+            
+            tfidf_path = self.cache_dir / "tfidf_vectorizer.pkl"
+            if tfidf_path.exists():
+                try:
+                    with open(tfidf_path, 'rb') as f:
+                        self.tfidf_vectorizer = pickle.load(f)
+                    self.tfidf_fitted = True
+                    logger.info("Loaded persisted TF-IDF vectorizer")
+                except Exception as e:
+                    logger.warning(f"Failed to load TF-IDF vectorizer: {e}")
+                    self.tfidf_vectorizer = TfidfVectorizer(
+                        max_features=384,
+                        ngram_range=(1, 2),
+                        sublinear_tf=True
+                    )
+                    self.tfidf_fitted = False
+            else:
+                self.tfidf_vectorizer = TfidfVectorizer(
+                    max_features=384,
+                    ngram_range=(1, 2),
+                    sublinear_tf=True
+                )
+                self.tfidf_fitted = False
+                logger.info("TF-IDF fallback loaded (not fitted yet)")
         except Exception as e:
             logger.error(f"Failed to load TF-IDF fallback: {e}")
             raise
@@ -144,13 +165,20 @@ class EmbeddingService:
             logger.info(f"Encoding {len(uncached_texts)} uncached texts")
             
             if self.model == 'tfidf':
-                # 使用TF-IDF备选方案
                 if not self.tfidf_fitted:
                     self.tfidf_vectorizer.fit(uncached_texts)
                     self.tfidf_fitted = True
+                    tfidf_path = self.cache_dir / "tfidf_vectorizer.pkl"
+                    with open(tfidf_path, 'wb') as f:
+                        pickle.dump(self.tfidf_vectorizer, f)
+                    logger.info("Saved TF-IDF vectorizer to disk")
                 
                 new_embeddings = self.tfidf_vectorizer.transform(uncached_texts).toarray()
-                # 归一化
+                if new_embeddings.shape[1] < self.embedding_dim:
+                    padding = np.zeros((new_embeddings.shape[0], self.embedding_dim - new_embeddings.shape[1]))
+                    new_embeddings = np.hstack([new_embeddings, padding])
+                elif new_embeddings.shape[1] > self.embedding_dim:
+                    new_embeddings = new_embeddings[:, :self.embedding_dim]
                 norms = np.linalg.norm(new_embeddings, axis=1, keepdims=True)
                 norms = np.where(norms == 0, 1, norms)
                 new_embeddings = new_embeddings / norms
@@ -176,6 +204,9 @@ class EmbeddingService:
                 self._dirty_count = 0
         
         results_array = np.array(results, dtype=np.float32)
+        
+        if results_array.ndim == 1 and not single_input:
+            results_array = results_array.reshape(1, -1)
         
         if single_input:
             return results_array[0]
@@ -206,24 +237,26 @@ class EmbeddingService:
         批量计算相似度矩阵
         
         Args:
-            vectors1: 向量矩阵1 (n, d)
-            vectors2: 向量矩阵2 (m, d)
+            vectors1: 向量矩阵1 (n, d) 或单个向量 (d,)
+            vectors2: 向量矩阵2 (m, d) 或单个向量 (d,)
             
         Returns:
             相似度矩阵 (n, m)
         """
-        # 归一化
+        if vectors1.ndim == 1:
+            vectors1 = vectors1.reshape(1, -1)
+        if vectors2.ndim == 1:
+            vectors2 = vectors2.reshape(1, -1)
+        
         norms1 = np.linalg.norm(vectors1, axis=1, keepdims=True)
         norms2 = np.linalg.norm(vectors2, axis=1, keepdims=True)
         
-        # 避免除零
         norms1 = np.where(norms1 == 0, 1, norms1)
         norms2 = np.where(norms2 == 0, 1, norms2)
         
         normalized1 = vectors1 / norms1
         normalized2 = vectors2 / norms2
         
-        # 计算余弦相似度矩阵
         return np.dot(normalized1, normalized2.T)
     
     def clear_cache(self):
