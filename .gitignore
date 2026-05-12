@@ -56,6 +56,9 @@ frontend/build/
 .DS_Store
 Thumbs.db
 
+# Playwright MCP
+.playwright-mcp/
+
 # 向量数据库数据
 vector_data/
 *.faiss
