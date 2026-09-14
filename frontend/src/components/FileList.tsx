@@ -1,19 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { List, Tag, Typography, Spin } from 'antd';
-import { FilePdfOutlined, FileMarkdownOutlined, FileTextOutlined, FileExcelOutlined, FileUnknownOutlined } from '@ant-design/icons';
-import axios from 'axios';
+import React, { useState, useEffect, useCallback } from 'react';
+import { List, Tag, Typography, Spin, Popconfirm, Button, Space, Tooltip } from 'antd';
+import {
+  FilePdfOutlined,
+  FileMarkdownOutlined,
+  FileTextOutlined,
+  FileExcelOutlined,
+  FileUnknownOutlined,
+  ReloadOutlined,
+  DeleteOutlined,
+} from '@ant-design/icons';
+import { fetchFiles, deleteFile, parseTextbook, FileItem } from '../api/client';
 
 const { Text } = Typography;
 
-interface FileItem {
-  file_id: string;
-  filename: string;
-  size: number;
-  status: string;
-  parse_status: string;
-  chapter_count: number;
-  error_message?: string;
-}
+export const FILES_CHANGED_EVENT = 'textbooks-changed';
 
 const getFileIcon = (fileName: string) => {
   const extension = fileName.split('.').pop()?.toLowerCase();
@@ -35,22 +35,33 @@ const getFileIcon = (fileName: string) => {
 };
 
 const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B';
+  if (!bytes) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  return `${parseFloat((bytes / k ** i).toFixed(2))} ${sizes[i]}`;
 };
 
-const getParseStatusTag = (status: string, chapterCount: number, errorMessage?: string) => {
-  switch (status) {
+const getParseStatusTag = (item: FileItem) => {
+  switch (item.parse_status) {
     case 'completed':
-      return <Tag color="green">已完成 ({chapterCount}章)</Tag>;
+      return (
+        <Tooltip title={`${item.chapter_count} 个章节 · ${item.total_chars.toLocaleString()} 字`}>
+          <Tag color="green">已解析</Tag>
+        </Tooltip>
+      );
     case 'parsing':
-      return <Tag color="blue"><Spin size="small" /> 解析中</Tag>;
+      return (
+        <Tag color="blue">
+          <Spin size="small" /> 解析中
+        </Tag>
+      );
     case 'failed':
-      return <Tag color="red" title={errorMessage}>解析失败</Tag>;
-    case 'pending':
+      return (
+        <Tooltip title={item.error_message ?? '解析失败'}>
+          <Tag color="red">解析失败</Tag>
+        </Tooltip>
+      );
     default:
       return <Tag color="orange">等待解析</Tag>;
   }
@@ -61,31 +72,55 @@ const FileList: React.FC = () => {
   const [loading, setLoading] = useState(false);
 
   const hasActiveParsing = fileList.some(
-    f => f.parse_status === 'parsing' || f.parse_status === 'pending'
+    (f) => f.parse_status === 'parsing' || f.parse_status === 'pending',
   );
 
-  const fetchFiles = async () => {
-    setLoading(true);
+  const load = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setLoading(true);
     try {
-      const response = await axios.get('/api/files/');
-      setFileList(response.data);
+      setFileList(await fetchFiles());
     } catch (error) {
-      console.error('Failed to fetch files:', error);
+      console.error('获取文件列表失败', error);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchFiles();
   }, []);
 
   useEffect(() => {
-    if (!hasActiveParsing) return;
+    void load(true);
+    const onChanged = () => void load(true);
+    window.addEventListener(FILES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(FILES_CHANGED_EVENT, onChanged);
+  }, [load]);
 
-    const interval = setInterval(fetchFiles, 5000);
+  useEffect(() => {
+    if (!hasActiveParsing) return;
+    const interval = setInterval(() => void load(), 3000);
     return () => clearInterval(interval);
-  }, [hasActiveParsing]);
+  }, [hasActiveParsing, load]);
+
+  const handleReparse = async (fileId: string) => {
+    try {
+      await parseTextbook(fileId);
+      setFileList((prev) =>
+        prev.map((f) => (f.file_id === fileId ? { ...f, parse_status: 'parsing', error_message: null } : f)),
+      );
+    } catch (err) {
+      console.error(err);
+      void load(true);
+    }
+  };
+
+  const handleDelete = async (fileId: string) => {
+    try {
+      await deleteFile(fileId);
+      setFileList((prev) => prev.filter((f) => f.file_id !== fileId));
+      window.dispatchEvent(new Event(FILES_CHANGED_EVENT));
+    } catch (err) {
+      console.error(err);
+      void load(true);
+    }
+  };
 
   return (
     <List
@@ -93,21 +128,45 @@ const FileList: React.FC = () => {
       dataSource={fileList}
       locale={{ emptyText: '暂无上传文件' }}
       renderItem={(item) => (
-        <List.Item
-          actions={[
-            getParseStatusTag(item.parse_status, item.chapter_count, item.error_message),
-          ]}
-        >
-          <List.Item.Meta
-            avatar={getFileIcon(item.filename)}
-            title={<Text>{item.filename}</Text>}
-            description={
-              <Text type="secondary">
-                {formatFileSize(item.size)}
-                {item.parse_status === 'completed' && ` · ${item.chapter_count} 个章节`}
+        // 侧边栏只有 22% 宽，不用 antd List.Item 的 actions 布局
+        // （状态标签 + 两个按钮会把文件名挤到「一行一个字」）
+        <List.Item style={{ padding: '10px 0', display: 'block' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <span style={{ fontSize: 18, lineHeight: '22px' }}>{getFileIcon(item.filename)}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Text ellipsis={{ tooltip: item.filename }} style={{ display: 'block' }}>
+                {item.filename}
               </Text>
-            }
-          />
+              <Space size={4} wrap style={{ marginTop: 2 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {formatFileSize(item.size)}
+                  {item.parse_status === 'completed' && ` · ${item.chapter_count} 章`}
+                </Text>
+                {getParseStatusTag(item)}
+                {item.has_graph && <Tag color="blue">图谱</Tag>}
+              </Space>
+            </div>
+            <Space size={0} style={{ flexShrink: 0 }}>
+              <Tooltip title="重新解析" key="reparse">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  disabled={item.parse_status === 'parsing'}
+                  onClick={() => handleReparse(item.file_id)}
+                />
+              </Tooltip>
+              <Popconfirm
+                key="delete"
+                title="删除该教材及其知识图谱？"
+                onConfirm={() => handleDelete(item.file_id)}
+                okText="删除"
+                cancelText="取消"
+              >
+                <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+              </Popconfirm>
+            </Space>
+          </div>
         </List.Item>
       )}
     />

@@ -34,7 +34,7 @@ class XlsxParser(BaseParser):
             total_chars = sum(ch.char_count for ch in chapters)
 
             return Textbook(
-                textbook_id=file_path.stem,
+                textbook_id=self._textbook_id(file_path),
                 filename=file_path.name,
                 title=self._extract_title_from_filename(file_path),
                 total_pages=0,

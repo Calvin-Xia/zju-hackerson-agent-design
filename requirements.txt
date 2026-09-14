@@ -6,37 +6,35 @@
 # ---------- Web 框架 ----------
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-python-multipart==0.0.19
+python-multipart==0.0.19    # 文件上传（multipart/form-data）
 
 # ---------- 文件解析 ----------
-pdfplumber==0.11.9          # PDF解析
-pypdf==6.11.0                # PDF解析（备选）
-python-docx==1.1.2           # Word .docx解析
-openpyxl==3.1.5              # Excel解析
-pandas==2.2.3                # 数据处理
-markdown==3.7                # Markdown解析
-beautifulsoup4==4.12.3       # HTML解析
+pdfplumber==0.11.9          # PDF 解析
+python-docx==1.1.2          # Word .docx 解析
+openpyxl==3.1.5             # Excel .xlsx 解析
+# Markdown 由 src/parsers/markdown_parser.py 自行按标题切分，无需额外依赖
 
-# ---------- LLM & AI ----------
-openai==1.68.0               # OpenAI API
-dashscope==1.22.1            # 通义千问 API
-sentence-transformers==3.4.1 # 文本嵌入
-transformers==4.48.3         # HuggingFace Transformers
-torch>=2.9.0                 # PyTorch（CPU版本即可）
+# ---------- LLM ----------
+# DeepSeek / 通义千问（DashScope 兼容模式）/ OpenAI 均通过 OpenAI 兼容接口调用
+openai==1.68.0
 
-# ---------- 向量数据库 ----------
-faiss-cpu>=1.12.0            # FAISS 向量检索
-chromadb==0.5.23             # ChromaDB（备选）
+# ---------- 嵌入 ----------
+# sentence-transformers 不可用（离线/未下载模型）时自动降级为 hashing 后端，
+# 因此它是可选依赖：只想要 hashing 后端可以不装，装了就自动获得更好的语义检索。
+sentence-transformers==3.4.1
+torch>=2.2                  # PyTorch（sentence-transformers 的运行依赖，CPU 版即可）
+
+# ---------- 向量检索 ----------
+faiss-cpu>=1.8              # 未安装时自动降级为 numpy 精确检索
 
 # ---------- 工具库 ----------
-python-dotenv==1.0.1         # 环境变量管理
-pydantic==2.10.5             # 数据验证
-pydantic-settings==2.7.0     # 配置管理
-httpx==0.28.1                # HTTP客户端
-numpy==2.2.2                 # 数值计算
-scikit-learn==1.6.1          # 机器学习工具
-reportlab>=4.0               # PDF生成（测试用）
+python-dotenv==1.0.1        # 环境变量管理
+pydantic==2.10.5            # 数据验证
+pydantic-settings==2.7.0    # 配置管理
+httpx==0.28.1               # HTTP 客户端
+numpy==2.2.2                # 数值计算
+scikit-learn==1.6.1         # HashingVectorizer（hashing 降级后端）
 
 # ---------- 测试 ----------
-pytest>=8.0.0                # 测试框架
-pytest-asyncio>=0.23.0       # 异步测试支持
+pytest>=8.0.0               # 测试框架
+pytest-asyncio>=0.23.0      # 异步测试支持

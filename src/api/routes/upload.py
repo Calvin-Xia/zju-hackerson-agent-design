@@ -1,20 +1,24 @@
-import uuid
+"""教材上传 API。"""
+
+from __future__ import annotations
+
 import asyncio
 import logging
+import uuid
 from pathlib import Path
-from typing import List
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from src.shared.config import settings
-from src.parsers.factory import parse_file
-from src.api.routes.parse import update_parse_status
+from src.api.routes.parse import parse_file_by_id, update_parse_status
 from src.models.parse_status import ParseStatus
+from src.shared.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+READ_CHUNK_SIZE = 1024 * 1024  # 1MB
 
 
 class UploadResponse(BaseModel):
@@ -24,74 +28,79 @@ class UploadResponse(BaseModel):
     message: str
 
 
-@router.post("/", response_model=UploadResponse)
-async def upload_file(file: UploadFile = File(...)):
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No filename provided")
+async def _save_upload(file: UploadFile, destination: Path, max_bytes: int) -> int:
+    """流式写入上传文件，边写边校验大小，避免一次性读入内存。
 
-    extension = file.filename.split(".")[-1].lower()
-    logger.debug(f"Upload request: filename={file.filename}, extension={extension}")
-    if extension not in settings.ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file format: {extension}",
-        )
-
-    content = await file.read()
-    file_size = len(content)
-    max_size = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-
-    if file_size > max_size:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB}MB",
-        )
-
-    file_id = str(uuid.uuid4())
-    safe_filename = Path(file.filename).name
-    file_path = Path("data/textbooks") / f"{file_id}_{safe_filename}"
-
+    任何失败（含客户端中断）都会删除半成品文件，避免留下孤儿文件 ——
+    这类文件会被文件列表当成"上传成功但解析失败"，误导用户。
+    """
+    total = 0
     try:
-        with open(file_path, "wb") as f:
-            f.write(content)
-        logger.info(f"File saved: {file_path}")
-    except Exception as e:
-        logger.error(f"Failed to save file: {e}")
-        raise HTTPException(status_code=500, detail="Failed to save file")
+        with open(destination, "wb") as target:
+            while True:
+                chunk = await file.read(READ_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件超过大小上限 {settings.MAX_UPLOAD_SIZE_MB}MB",
+                    )
+                target.write(chunk)
+    except HTTPException:
+        destination.unlink(missing_ok=True)
+        raise
+    except OSError as exc:
+        destination.unlink(missing_ok=True)
+        logger.error("保存上传文件失败: %s", exc)
+        raise HTTPException(status_code=500, detail="保存文件失败") from exc
+    except Exception as exc:  # 客户端中断等
+        destination.unlink(missing_ok=True)
+        logger.warning("上传中断，已清理临时文件 %s: %s", destination.name, exc)
+        raise
 
-    # 异步触发解析
+    return total
+
+
+@router.post("/", response_model=UploadResponse)
+async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
+    """上传教材文件并自动开始解析。"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+
+    safe_filename = Path(file.filename).name
+    extension = safe_filename.rsplit(".", 1)[-1].lower() if "." in safe_filename else ""
+    allowed_extensions = settings.allowed_extensions
+    if extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件格式：{extension or '未知'}，"
+                   f"支持 {', '.join(allowed_extensions)}",
+        )
+
+    settings.textbooks_dir.mkdir(parents=True, exist_ok=True)
+    file_id = str(uuid.uuid4())
+    file_path = settings.textbooks_dir / f"{file_id}_{safe_filename}"
+
+    size = await _save_upload(file, file_path, settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024)
+    logger.info("文件已保存: %s（%d 字节）", file_path.name, size)
+
     update_parse_status(file_id, ParseStatus.PENDING)
-    task = asyncio.create_task(_parse_file_async(file_id, file_path))
-    task.add_done_callback(lambda t: logger.error(f"Parse task failed: {t.exception()}") if t.exception() else None)
+    task = asyncio.create_task(parse_file_by_id(file_id))
+
+    def _log_failure(completed_task: asyncio.Task) -> None:
+        if completed_task.cancelled():
+            return
+        exc = completed_task.exception()
+        if exc:
+            logger.error("解析任务异常: %s", exc)
+
+    task.add_done_callback(_log_failure)
 
     return UploadResponse(
         file_id=file_id,
-        filename=file.filename,
-        size=file_size,
-        message="File uploaded successfully",
+        filename=safe_filename,
+        size=size,
+        message="上传成功，已开始解析",
     )
-
-
-async def _parse_file_async(file_id: str, file_path: Path):
-    """异步解析文件"""
-    try:
-        update_parse_status(file_id, ParseStatus.PARSING)
-        
-        textbook = await parse_file(file_path)
-        
-        # 保存解析结果
-        result_path = file_path.parent / f"{file_id}_parsed.json"
-        with open(result_path, 'w', encoding='utf-8') as f:
-            f.write(textbook.model_dump_json(indent=2))
-        
-        update_parse_status(
-            file_id,
-            ParseStatus.COMPLETED,
-            chapter_count=len(textbook.chapters),
-            total_chars=textbook.total_chars
-        )
-        logger.info(f"Parsing completed: {file_id}, chapters: {len(textbook.chapters)}")
-    
-    except Exception as e:
-        logger.error(f"Parsing failed for {file_id}: {e}")
-        update_parse_status(file_id, ParseStatus.FAILED, error_message=str(e))

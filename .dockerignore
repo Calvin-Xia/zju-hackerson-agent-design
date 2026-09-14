@@ -25,24 +25,29 @@ frontend/node_modules
 .env
 .env.local
 
-# Data (will be mounted as volume)
+# 运行时数据（由 docker-compose 以 volume 挂载，不进镜像）
 data/textbooks/*
-data/kg/*
-data/integration/*
+data/knowledge_graphs/*
 data/vectorstore/*
 data/dialogue/*
 data/embedding_cache/*
+data/tasks/*
 
-# Documentation
+# 文档与测试
 docs/
 report/
+tests/
+phase-*/
 *.md
 
-# Tests
-tests/
-
-# Phase files
-phase-*/
+# 根目录下的测试素材（不需要进构建上下文）
+*.pdf
+test.xlsx
+test_textbook*.docx
+test_frontend.py
+frontend_test.png
+backend_*.log
+server_*.log
 
 # Misc
 *.log

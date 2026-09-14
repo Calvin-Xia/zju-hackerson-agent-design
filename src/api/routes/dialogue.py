@@ -54,25 +54,24 @@ class HistoryResponse(BaseModel):
 async def chat(request: ChatRequest):
     """发送消息"""
     if not request.message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-    
+        raise HTTPException(status_code=400, detail="消息不能为空")
+
     conversation_id = request.conversation_id or f"conv_{uuid.uuid4().hex[:8]}"
-    
+
     context_manager = get_context_manager()
-    context_manager.add_message(conversation_id, "user", request.message)
-    
     context = context_manager.get_context(conversation_id)
-    recent_messages = context.get_recent_messages(10)
-    
-    conversation_history = "\n".join([
+
+    # 先取历史再落库，否则最新一条用户消息会在历史里出现一次、
+    # 又在下面的「用户最新消息」里重复一次，模型会看到两遍同样的问题。
+    conversation_history = "\n".join(
         f"{'用户' if msg.role == 'user' else '助手'}: {msg.content}"
-        for msg in recent_messages
-    ])
-    
+        for msg in context.get_recent_messages(10)
+    )
+
     prompt = f"""你是一个教育知识整合助手，帮助教师理解和优化知识整合方案。
 
 对话历史：
-{conversation_history}
+{conversation_history or '（无）'}
 
 用户最新消息：{request.message}
 
@@ -87,39 +86,45 @@ async def chat(request: ChatRequest):
     try:
         response = await call_llm(
             prompt=prompt,
-            system_prompt="你是一个教育知识整合专家，擅长解释整合决策和处理用户反馈。"
+            system_prompt="你是一个教育知识整合专家，擅长解释整合决策和处理用户反馈。",
         )
-        
-        context_manager.add_message(conversation_id, "assistant", response)
-        
-        suggestions = _generate_suggestions(request.message, response)
-        
-        return ChatResponse(
-            conversation_id=conversation_id,
-            response=response,
-            suggestions=suggestions
-        )
-    except Exception as e:
-        logger.error(f"Chat failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate response: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("对话生成失败: %s", exc)
+        # 失败时不落库，避免留下一条永远得不到回复的用户消息
+        raise HTTPException(status_code=502, detail="生成回复失败，请稍后重试") from exc
+
+    context_manager.add_message(conversation_id, "user", request.message)
+    context_manager.add_message(conversation_id, "assistant", response)
+
+    return ChatResponse(
+        conversation_id=conversation_id,
+        response=response,
+        suggestions=_generate_suggestions(request.message, response),
+    )
 
 
 def _generate_suggestions(user_message: str, assistant_response: str) -> List[str]:
-    """生成建议"""
-    suggestions = []
-    
-    if "决策" in user_message or "整合" in user_message:
+    """根据用户消息与回复内容生成后续操作建议。"""
+    combined = f"{user_message}\n{assistant_response}"
+    suggestions: List[str] = []
+
+    if "决策" in combined or "整合" in combined:
         suggestions.append("查看所有整合决策")
-        suggestions.append("修改这个决策")
-    
-    if "知识点" in user_message:
+        suggestions.append("这个决策的依据是什么？")
+    if "知识点" in combined:
         suggestions.append("查看知识点详情")
-        suggestions.append("查看相关知识点")
-    
-    if not suggestions:
-        suggestions.append("查看整合统计")
-        suggestions.append("开始新的整合")
-    
+        suggestions.append("还有哪些相关知识点？")
+    if "精简" in combined or "压缩" in combined or "字数" in combined:
+        suggestions.append("压缩比是多少？")
+    if "引用" in combined or "来源" in combined or "出处" in combined:
+        suggestions.append("这些内容来自哪本教材？")
+
+    for fallback in ("查看整合统计", "开始新的整合"):
+        if len(suggestions) >= 3:
+            break
+        if fallback not in suggestions:
+            suggestions.append(fallback)
+
     return suggestions[:3]
 
 
@@ -127,8 +132,8 @@ def _generate_suggestions(user_message: str, assistant_response: str) -> List[st
 async def submit_feedback(request: FeedbackRequest):
     """提交反馈"""
     if not request.content.strip():
-        raise HTTPException(status_code=400, detail="Feedback content cannot be empty")
-    
+        raise HTTPException(status_code=400, detail="反馈内容不能为空")
+
     context_manager = get_context_manager()
     context_manager.add_message(
         request.conversation_id,
@@ -137,30 +142,29 @@ async def submit_feedback(request: FeedbackRequest):
         metadata={
             "type": "feedback",
             "decision_id": request.decision_id,
-            "feedback_type": request.feedback_type
-        }
+            "feedback_type": request.feedback_type,
+        },
     )
-    
-    logger.info(f"Feedback received: {request.feedback_type} for decision {request.decision_id}")
-    
+
+    logger.info("收到反馈: %s（决策 %s）", request.feedback_type, request.decision_id)
+
     return FeedbackResponse(
         success=True,
-        message="反馈已收到，系统将根据反馈调整整合方案"
+        message="反馈已收到，系统将根据反馈调整整合方案",
     )
 
 
 @router.get("/history/{conversation_id}", response_model=HistoryResponse)
-async def get_history(conversation_id: str):
-    """获取对话历史"""
+async def get_history(conversation_id: str, limit: int = 200):
+    """获取对话历史（默认最多返回最近 200 条）。"""
     context_manager = get_context_manager()
     context = context_manager.get_context(conversation_id)
-    
+
     messages = [msg.to_dict() for msg in context.messages]
-    
-    return HistoryResponse(
-        conversation_id=conversation_id,
-        messages=messages
-    )
+    if limit > 0:
+        messages = messages[-limit:]
+
+    return HistoryResponse(conversation_id=conversation_id, messages=messages)
 
 
 @router.delete("/history/{conversation_id}")

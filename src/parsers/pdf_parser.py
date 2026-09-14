@@ -110,7 +110,7 @@ class PdfParser(BaseParser):
                 raise
         
         return Textbook(
-            textbook_id=file_path.stem,
+            textbook_id=self._textbook_id(file_path),
             filename=file_path.name,
             title=self._extract_title_from_filename(file_path),
             total_pages=total_pages,

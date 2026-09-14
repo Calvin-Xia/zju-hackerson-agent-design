@@ -1,280 +1,361 @@
-"""
-共享嵌入服务模块
+"""文本向量化服务。
 
-提供文本向量化功能，支持：
-- 模型加载和初始化
-- 单个和批量文本编码
-- 向量缓存
-- 相似度计算
+提供两种后端：
+
+1. ``sentence-transformers`` —— 首选，语义质量最好；
+2. ``hashing`` —— 无状态降级方案（离线环境 / 模型不可用时自动启用）。
+
+降级方案使用 ``HashingVectorizer`` 对字符 n-gram 做哈希投影，**无需 fit**，
+因此索引期与查询期的向量严格一致，服务重启后也不会漂移 —— 这是旧版
+TF-IDF 降级方案（在首批文本上 fit）无法保证的。
+
+向量一律做 L2 归一化，余弦相似度即内积。
 """
+
+from __future__ import annotations
 
 import hashlib
 import logging
 import os
-from typing import List, Optional, Union
-import numpy as np
+import threading
 from pathlib import Path
-import json
-import pickle
+from typing import Dict, List, Optional, Sequence, Tuple, Union
+
+import numpy as np
+
+from src.shared.config import settings
 
 logger = logging.getLogger(__name__)
 
+EmbeddingInput = Union[str, Sequence[str]]
+
 
 class EmbeddingService:
-    """文本嵌入服务"""
-    
-    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2", cache_dir: Optional[str] = None):
-        """
-        初始化嵌入服务
-        
-        Args:
-            model_name: 嵌入模型名称
-            cache_dir: 缓存目录路径
-        """
-        self.model_name = model_name
-        self.model = None
+    """文本嵌入服务（线程安全单例使用）。"""
+
+    def __init__(
+        self,
+        model_name: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        backend: Optional[str] = None,
+    ):
+        self.model_name = model_name or settings.EMBEDDING_MODEL
+        self.requested_backend = (backend or settings.EMBEDDING_BACKEND or "auto").lower()
         self.cache_dir = Path(cache_dir) if cache_dir else Path("data/embedding_cache")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache: dict[str, np.ndarray] = {}
+
+        self.model = None
+        self._backend: Optional[str] = None
+        self._dimension: int = int(settings.EMBEDDING_DIM)
+        self._cache: Dict[str, np.ndarray] = {}
         self._dirty_count = 0
-        self._save_threshold = 10  # 每10次更新保存一次
-        self._load_cache()
-    
-    def _load_cache(self):
-        """从磁盘加载缓存"""
-        cache_file = self.cache_dir / "embedding_cache.json"
-        if cache_file.exists():
-            try:
-                with open(cache_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                for key, vector_list in data.items():
-                    vec = np.array(vector_list, dtype=np.float32)
-                    if vec.ndim == 1:
-                        self._cache[key] = vec
-                logger.info(f"Loaded {len(self._cache)} cached embeddings")
-            except Exception as e:
-                logger.warning(f"Failed to load embedding cache: {e}")
-    
-    def _save_cache(self):
-        """保存缓存到磁盘"""
-        cache_file = self.cache_dir / "embedding_cache.json"
-        try:
-            data = {key: vector.tolist() for key, vector in self._cache.items()}
-            with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f)
-            logger.debug(f"Saved {len(self._cache)} embeddings to cache")
-        except Exception as e:
-            logger.warning(f"Failed to save embedding cache: {e}")
-    
-    def _get_cache_key(self, text: str) -> str:
-        """生成缓存键"""
-        return hashlib.md5(text.encode('utf-8')).hexdigest()
-    
-    def _load_model(self):
-        """懒加载模型"""
-        if self.model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-                
-                # 设置HuggingFace镜像源
-                os.environ.setdefault('HF_ENDPOINT', 'https://hf-mirror.com')
-                
-                logger.info(f"Loading embedding model: {self.model_name}")
-                
-                # 尝试从本地缓存加载模型
-                try:
-                    self.model = SentenceTransformer(self.model_name, local_files_only=True)
-                    logger.info("Embedding model loaded from local cache")
-                except Exception as local_error:
-                    logger.warning(f"Failed to load from local cache: {local_error}")
-                    logger.info("Falling back to TF-IDF vectorizer")
-                    self._load_tfidf_fallback()
-                    
-            except Exception as e:
-                logger.warning(f"Failed to load SentenceTransformer model: {e}")
-                logger.info("Falling back to TF-IDF vectorizer")
-                self._load_tfidf_fallback()
-    
-    def _load_tfidf_fallback(self):
-        """加载TF-IDF备选方案"""
-        try:
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            self.model = 'tfidf'
-            self.embedding_dim = 384
-            
-            tfidf_path = self.cache_dir / "tfidf_vectorizer.pkl"
-            if tfidf_path.exists():
-                try:
-                    with open(tfidf_path, 'rb') as f:
-                        self.tfidf_vectorizer = pickle.load(f)
-                    self.tfidf_fitted = True
-                    logger.info("Loaded persisted TF-IDF vectorizer")
-                except Exception as e:
-                    logger.warning(f"Failed to load TF-IDF vectorizer: {e}")
-                    self.tfidf_vectorizer = TfidfVectorizer(
-                        max_features=384,
-                        ngram_range=(1, 2),
-                        sublinear_tf=True
-                    )
-                    self.tfidf_fitted = False
-            else:
-                self.tfidf_vectorizer = TfidfVectorizer(
-                    max_features=384,
-                    ngram_range=(1, 2),
-                    sublinear_tf=True
+        self._save_threshold = 64
+        self._lock = threading.RLock()
+        self._ready = False
+
+    # ------------------------------------------------------------------
+    # 后端与元信息
+    # ------------------------------------------------------------------
+    def _load_model(self) -> None:
+        """惰性初始化后端（只执行一次）。"""
+        if self._ready:
+            return
+
+        with self._lock:
+            if self._ready:
+                return
+
+            if self.requested_backend in ("auto", "sentence-transformers"):
+                if self._try_load_sentence_transformer():
+                    self._backend = "sentence-transformers"
+                elif self.requested_backend == "sentence-transformers":
+                    logger.warning("sentence-transformers 不可用，降级为 hashing 后端")
+            elif self.requested_backend not in ("hashing",):
+                logger.warning(
+                    "未知的 EMBEDDING_BACKEND=%r，按 auto 处理",
+                    self.requested_backend,
                 )
-                self.tfidf_fitted = False
-                logger.info("TF-IDF fallback loaded (not fitted yet)")
-        except Exception as e:
-            logger.error(f"Failed to load TF-IDF fallback: {e}")
-            raise
-    
-    def encode(self, texts: Union[str, List[str]], show_progress: bool = False) -> np.ndarray:
-        """
-        将文本编码为向量
-        
-        Args:
-            texts: 单个文本或文本列表
-            show_progress: 是否显示进度
-            
-        Returns:
-            向量或向量数组
+
+            if self._backend is None:
+                self._load_hashing_backend()
+
+            self._ready = True
+            self._load_cache()
+            logger.info(
+                "嵌入后端就绪: backend=%s, dimension=%d, signature=%s",
+                self._backend,
+                self._dimension,
+                self.signature,
+            )
+
+    def _try_load_sentence_transformer(self) -> bool:
+        if settings.EMBEDDING_OFFLINE:
+            # 关闭 HuggingFace 的网络探测，避免离线环境下长达数分钟的重试
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            logger.warning("未安装 sentence-transformers，使用 hashing 后端")
+            return False
+
+        try:
+            logger.info("加载嵌入模型: %s", self.model_name)
+            model = SentenceTransformer(self.model_name, local_files_only=True)
+        except Exception as exc:  # 模型缺失 / 无网络 / 权重损坏
+            logger.warning("本地加载嵌入模型失败(%s)，使用 hashing 后端: %s", self.model_name, exc)
+            return False
+
+        try:
+            dim = int(model.get_sentence_embedding_dimension())
+        except Exception:
+            dim = int(settings.EMBEDDING_DIM)
+        if dim <= 0:
+            logger.warning("嵌入模型维度非法(%s)，使用 hashing 后端", dim)
+            return False
+
+        self.model = model
+        self._dimension = dim
+        return True
+
+    def _load_hashing_backend(self) -> None:
+        from sklearn.feature_extraction.text import HashingVectorizer
+
+        self._dimension = int(settings.EMBEDDING_DIM)
+        # 字符 n-gram（含单字）对中文无需分词，对英文术语同样有效；
+        # alternate_sign=True 让哈希投影近似 SimHash，余弦相似度更稳定。
+        self.model = HashingVectorizer(
+            analyzer="char",
+            ngram_range=(1, 3),
+            n_features=self._dimension,
+            alternate_sign=True,
+            norm="l2",
+            dtype=np.float32,
+        )
+        self._backend = "hashing"
+        logger.info("使用 hashing 降级嵌入后端 (dim=%d, char 1-3 gram)", self._dimension)
+
+    @property
+    def backend(self) -> str:
+        self._load_model()
+        return self._backend or "hashing"
+
+    @property
+    def dimension(self) -> int:
+        self._load_model()
+        return self._dimension
+
+    @property
+    def signature(self) -> str:
+        """后端指纹，用于判断已落盘的向量是否仍然有效。"""
+        self._load_model()
+        if self._backend == "sentence-transformers":
+            return f"st:{self.model_name}:{self._dimension}"
+        return f"hashing:char1-3:{self._dimension}"
+
+    @property
+    def suggested_min_score(self) -> float:
+        """该后端下「相关」的推荐相似度下限。
+
+        两种后端的余弦分布差异很大（语义模型普遍偏高，哈希投影偏低），
+        按后端给出不同的默认阈值，避免降级运行时召回为空。
         """
         self._load_model()
-        
-        single_input = isinstance(texts, str)
-        if single_input:
-            texts = [texts]
-        
-        # 检查缓存
-        results = []
-        uncached_texts = []
-        uncached_indices = []
-        
-        for i, text in enumerate(texts):
-            cache_key = self._get_cache_key(text)
-            if cache_key in self._cache:
-                results.append(self._cache[cache_key])
-            else:
-                results.append(None)
-                uncached_texts.append(text)
-                uncached_indices.append(i)
-        
-        # 编码未缓存的文本
-        if uncached_texts:
-            logger.info(f"Encoding {len(uncached_texts)} uncached texts")
-            
-            if self.model == 'tfidf':
-                if not self.tfidf_fitted:
-                    self.tfidf_vectorizer.fit(uncached_texts)
-                    self.tfidf_fitted = True
-                    tfidf_path = self.cache_dir / "tfidf_vectorizer.pkl"
-                    with open(tfidf_path, 'wb') as f:
-                        pickle.dump(self.tfidf_vectorizer, f)
-                    logger.info("Saved TF-IDF vectorizer to disk")
-                
-                new_embeddings = self.tfidf_vectorizer.transform(uncached_texts).toarray()
-                if new_embeddings.shape[1] < self.embedding_dim:
-                    padding = np.zeros((new_embeddings.shape[0], self.embedding_dim - new_embeddings.shape[1]))
-                    new_embeddings = np.hstack([new_embeddings, padding])
-                elif new_embeddings.shape[1] > self.embedding_dim:
-                    new_embeddings = new_embeddings[:, :self.embedding_dim]
-                norms = np.linalg.norm(new_embeddings, axis=1, keepdims=True)
-                norms = np.where(norms == 0, 1, norms)
-                new_embeddings = new_embeddings / norms
-            else:
-                # 使用SentenceTransformer
-                new_embeddings = self.model.encode(
-                    uncached_texts,
-                    show_progress_bar=show_progress,
+        return 0.35 if self._backend == "sentence-transformers" else 0.18
+
+    # ------------------------------------------------------------------
+    # 缓存
+    # ------------------------------------------------------------------
+    def _cache_file(self) -> Path:
+        digest = hashlib.md5(self.signature.encode("utf-8")).hexdigest()[:10]
+        return self.cache_dir / f"embedding_cache_{digest}.npz"
+
+    def _load_cache(self) -> None:
+        path = self._cache_file()
+        if not path.exists():
+            return
+        try:
+            with np.load(path, allow_pickle=False) as data:
+                keys = [str(k) for k in data["keys"]]
+                vectors = data["vectors"]
+                stored_signature = str(data["signature"]) if "signature" in data else ""
+            if stored_signature != self.signature:
+                logger.warning("嵌入缓存指纹不匹配，忽略旧缓存: %s", path)
+                return
+            for key, vector in zip(keys, vectors):
+                self._cache[key] = vector.astype(np.float32, copy=False)
+            logger.info("加载嵌入缓存 %d 条 (%s)", len(self._cache), path.name)
+        except Exception as exc:
+            logger.warning("加载嵌入缓存失败: %s", exc)
+
+    def _save_cache(self) -> None:
+        if not self._cache:
+            return
+        path = self._cache_file()
+        try:
+            keys = list(self._cache.keys())
+            vectors = np.vstack([self._cache[k] for k in keys]).astype(np.float32)
+            np.savez_compressed(
+                path,
+                keys=np.array(keys, dtype=str),  # 固定宽度字符串，避免依赖 pickle
+                vectors=vectors,
+                signature=np.array(self.signature),
+            )
+            logger.debug("保存嵌入缓存 %d 条 -> %s", len(keys), path.name)
+        except Exception as exc:
+            logger.warning("保存嵌入缓存失败: %s", exc)
+
+    # ------------------------------------------------------------------
+    # 编码
+    # ------------------------------------------------------------------
+    def _encode_uncached(self, texts: List[str]) -> np.ndarray:
+        if self._backend == "sentence-transformers":
+            return np.asarray(
+                self.model.encode(
+                    texts,
                     convert_to_numpy=True,
-                    normalize_embeddings=True
-                )
-            
-            # 更新缓存
-            for idx, text, embedding in zip(uncached_indices, uncached_texts, new_embeddings):
-                cache_key = self._get_cache_key(text)
-                self._cache[cache_key] = embedding
-                results[idx] = embedding
-                self._dirty_count += 1
-            
-            # 批量保存缓存
-            if self._dirty_count >= self._save_threshold:
-                self._save_cache()
-                self._dirty_count = 0
-        
-        results_array = np.array(results, dtype=np.float32)
-        
-        if results_array.ndim == 1 and not single_input:
-            results_array = results_array.reshape(1, -1)
-        
+                    normalize_embeddings=True,
+                    batch_size=32,
+                ),
+                dtype=np.float32,
+            )
+        matrix = self.model.transform(texts)
+        matrix = np.asarray(matrix.todense() if hasattr(matrix, "todense") else matrix, dtype=np.float32)
+        return self._l2_normalize(matrix)
+
+    @staticmethod
+    def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
+        if matrix.ndim == 1:
+            matrix = matrix.reshape(1, -1)
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1.0, norms)
+        return (matrix / norms).astype(np.float32)
+
+    def encode(self, texts: EmbeddingInput) -> np.ndarray:
+        """把文本编码成 L2 归一化的向量。
+
+        单个字符串返回 ``(dim,)``，列表返回 ``(n, dim)``。
+
+        缓存命中在锁内完成；真正的模型推理在锁外执行，
+        避免并发调用被串行化（推理是最耗时的部分）。
+        """
+        self._load_model()
+
+        single_input = isinstance(texts, str)
+        text_list: List[str] = [texts] if single_input else list(texts)
+
+        if not text_list:
+            return np.zeros((0, self._dimension), dtype=np.float32)
+
+        results: List[Optional[np.ndarray]] = [None] * len(text_list)
+
+        # 第一步：只读缓存（持锁时间极短）
+        with self._lock:
+            miss_indices: set = set()
+            for i, text in enumerate(text_list):
+                cached = self._cache.get(self._cache_key(text))
+                if cached is None:
+                    miss_indices.add(i)
+                else:
+                    results[i] = cached
+            misses: List[Tuple[int, str]] = [
+                (i, text) for i, text in enumerate(text_list) if i in miss_indices
+            ]
+
+        # 第二步：锁外做批量推理
+        if misses:
+            logger.info("编码 %d 条未缓存文本", len(misses))
+            new_embeddings = self._encode_uncached([text for _, text in misses])
+
+            # 第三步：写回缓存（另一线程可能已写入相同 key，保留先写入的结果）
+            with self._lock:
+                for (index, text), embedding in zip(misses, new_embeddings):
+                    key = self._cache_key(text)
+                    cached = self._cache.get(key)
+                    if cached is None:
+                        cached = embedding.astype(np.float32, copy=False)
+                        self._cache[key] = cached
+                        self._dirty_count += 1
+                    results[index] = cached
+
+                if self._dirty_count >= self._save_threshold:
+                    self._save_cache()
+                    self._dirty_count = 0
+
+        array = np.vstack([r for r in results if r is not None]).astype(np.float32)
+        if array.shape[1] != self._dimension:
+            raise ValueError(
+                f"嵌入维度不一致: 期望 {self._dimension}, 实际 {array.shape[1]}"
+            )
         if single_input:
-            return results_array[0]
-        return results_array
-    
+            return array[0]
+        return array
+
+    @staticmethod
+    def _cache_key(text: str) -> str:
+        return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+    # ------------------------------------------------------------------
+    # 相似度
+    # ------------------------------------------------------------------
     def similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
-        """
-        计算两个向量的余弦相似度
-        
-        Args:
-            vec1: 向量1
-            vec2: 向量2
-            
-        Returns:
-            相似度分数 (0-1)
-        """
-        dot_product = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-        
+        """两个向量的余弦相似度。"""
+        vec1 = np.asarray(vec1, dtype=np.float32).ravel()
+        vec2 = np.asarray(vec2, dtype=np.float32).ravel()
+        norm1 = float(np.linalg.norm(vec1))
+        norm2 = float(np.linalg.norm(vec2))
         if norm1 == 0 or norm2 == 0:
             return 0.0
-        
-        return float(dot_product / (norm1 * norm2))
-    
+        return float(np.dot(vec1, vec2) / (norm1 * norm2))
+
     def batch_similarity(self, vectors1: np.ndarray, vectors2: np.ndarray) -> np.ndarray:
-        """
-        批量计算相似度矩阵
-        
-        Args:
-            vectors1: 向量矩阵1 (n, d) 或单个向量 (d,)
-            vectors2: 向量矩阵2 (m, d) 或单个向量 (d,)
-            
-        Returns:
-            相似度矩阵 (n, m)
-        """
-        if vectors1.ndim == 1:
-            vectors1 = vectors1.reshape(1, -1)
-        if vectors2.ndim == 1:
-            vectors2 = vectors2.reshape(1, -1)
-        
-        norms1 = np.linalg.norm(vectors1, axis=1, keepdims=True)
-        norms2 = np.linalg.norm(vectors2, axis=1, keepdims=True)
-        
-        norms1 = np.where(norms1 == 0, 1, norms1)
-        norms2 = np.where(norms2 == 0, 1, norms2)
-        
-        normalized1 = vectors1 / norms1
-        normalized2 = vectors2 / norms2
-        
-        return np.dot(normalized1, normalized2.T)
-    
-    def clear_cache(self):
-        """清空缓存"""
-        self._cache.clear()
-        cache_file = self.cache_dir / "embedding_cache.json"
-        if cache_file.exists():
-            cache_file.unlink()
-        logger.info("Embedding cache cleared")
+        """批量余弦相似度矩阵 ``(n, m)``。"""
+        matrix1 = np.atleast_2d(np.asarray(vectors1, dtype=np.float32))
+        matrix2 = np.atleast_2d(np.asarray(vectors2, dtype=np.float32))
+        if matrix1.shape[1] != matrix2.shape[1]:
+            raise ValueError("两组向量维度不一致")
+        norm1 = np.where(np.linalg.norm(matrix1, axis=1, keepdims=True) == 0, 1.0,
+                         np.linalg.norm(matrix1, axis=1, keepdims=True))
+        norm2 = np.where(np.linalg.norm(matrix2, axis=1, keepdims=True) == 0, 1.0,
+                         np.linalg.norm(matrix2, axis=1, keepdims=True))
+        return (matrix1 / norm1) @ (matrix2 / norm2).T
+
+    def flush(self) -> None:
+        """把缓存落盘（进程退出/索引完成后调用）。"""
+        with self._lock:
+            if self._dirty_count:
+                self._save_cache()
+                self._dirty_count = 0
+
+    def clear_cache(self) -> None:
+        """清空当前后端的嵌入缓存。"""
+        with self._lock:
+            self._cache.clear()
+            self._dirty_count = 0
+            path = self._cache_file()
+            if path.exists():
+                path.unlink()
+            logger.info("嵌入缓存已清空")
 
 
-# 全局单例
 _embedding_service: Optional[EmbeddingService] = None
+_embedding_lock = threading.Lock()
 
 
-def get_embedding_service(model_name: str = "paraphrase-multilingual-MiniLM-L12-v2") -> EmbeddingService:
-    """获取嵌入服务单例"""
+def get_embedding_service(model_name: Optional[str] = None) -> EmbeddingService:
+    """获取嵌入服务单例。"""
     global _embedding_service
     if _embedding_service is None:
-        _embedding_service = EmbeddingService(model_name=model_name)
+        with _embedding_lock:
+            if _embedding_service is None:
+                _embedding_service = EmbeddingService(model_name=model_name)
     return _embedding_service
+
+
+def reset_embedding_service() -> None:
+    """重置单例（测试用）。"""
+    global _embedding_service
+    with _embedding_lock:
+        _embedding_service = None
